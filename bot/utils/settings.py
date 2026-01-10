@@ -1,0 +1,91 @@
+import os
+import json
+import sys
+import discord
+from discord.app_commands import AppCommand
+from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from bot import ENV_FILE_PATH
+
+
+class ImpersonationProfile(BaseModel):
+    """Represents a single impersonation profile for the bot."""
+
+    triggers: list[str]
+    username: str
+    avatar_url: str
+    bust_url: str
+    dossier_url: str | None = None
+    keyart_url: str | None = None
+    power_url: str | None = None
+
+
+class SettingsManager(BaseSettings):
+    """Bot settings loaded from environment variables."""
+
+    impersonation_profiles: list[ImpersonationProfile] = []
+    discord_token: str = Field()
+    debug_mode: bool = Field(default=False)
+    bot_timezone: ZoneInfo = Field(default=ZoneInfo("UTC"))
+    enabled_channels: list[int] = Field(default=[])
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILE_PATH,
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+        env_nested_delimiter="__",
+    )
+
+    @field_validator("bot_timezone", mode="before")
+    @classmethod
+    def normalize_bot_timezone(cls, v):
+        """Convert string timezone to ZoneInfo if needed."""
+        if isinstance(v, str):
+            return ZoneInfo(v)
+        return v
+
+    @field_validator("enabled_channels", mode="before")
+    @classmethod
+    def parse_enabled_channels_json(cls, v):
+        """Parse JSON string for enabled channels if needed."""
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
+
+    @field_validator("impersonation_profiles", mode="before")
+    @classmethod
+    def preprocess_profiles(cls, v):
+        """Normalize profiles and ensure no duplicate triggers exist."""
+        if isinstance(v, dict):
+            # Sort dict keys numerically and convert to list
+            v = [v[k] for k in sorted(v.keys(), key=int)]
+
+        all_triggers: set[str] = set()
+
+        for profile in v:
+            # Ensure triggers is a list
+            if isinstance(profile.get("triggers"), str):
+                profile["triggers"] = json.loads(profile["triggers"])
+
+            triggers_list = profile.get("triggers", [])
+            if not isinstance(triggers_list, list):
+                raise ValueError(f"Triggers must be a list, got {triggers_list!r}")
+
+            # Check for duplicate triggers across all profiles
+            duplicates = set(triggers_list) & all_triggers
+            if duplicates:
+                raise ValueError(
+                    f"Duplicate triggers found across profiles: {', '.join(duplicates)}"
+                )
+
+            # Add triggers to global set
+            all_triggers.update(triggers_list)
+
+        return v
+
+
+# Instantiate settings
+settings = SettingsManager()

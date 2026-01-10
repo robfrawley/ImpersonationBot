@@ -1,0 +1,11 @@
+discord.py
+
+# Date and Time Handling
+python-dateutil
+
+# Settings Handling
+python-dotenv
+pydantic-settings
+
+# Files
+aiofiles
