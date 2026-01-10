@@ -68,11 +68,57 @@ class ImpersonationCommands(commands.Cog):
         # Send the impersonated message
         send_success: ImpersonationProfile | bool = await send_as_profile(
             profile_trigger=trigger,
+            user=interaction.user,
             channel=interaction.channel,
             content=message,
             send_callback=send_callback,
             rm_thinking_callback=remove_thinking,
         )
+
+
+    @app_commands.command(
+        name="rp_help",
+        description="Show help about using the RP system",
+    )
+    async def rp_help(
+        self,
+        interaction: Any
+    ):
+        """Show help about using the RP system.
+
+        Args:
+            interaction (Interaction): The interaction that triggered the command.
+            channel (AllowedChannel | None): Optional channel to check; defaults to the current channel.
+        """
+        # Defer the interaction with ephemeral response
+        await interaction.response.defer(ephemeral=True)
+
+        async def send_callback(msg: str):
+            """Send an ephemeral error message to the user."""
+            await interaction.followup.send(msg, ephemeral=True)
+
+        # Check if RP is enabled in this channel
+        if not is_rp_enabled(interaction.channel):
+            msg = f"RP is not enabled in this channel ({get_channel_id(interaction.channel)})."
+            if send_callback:
+                await send_callback(msg)
+            logger.warn(msg)
+            return False
+
+        profile_listings = [
+            f"- **{p.username}**: " + ", ".join(f"`{t}`" for t in p.triggers)
+            for p in settings.impersonation_profiles
+            if p.is_allowed_user(interaction.user.id)
+        ]
+        msg = (
+            f"Available profiles and triggers:\n" +
+            "\n".join(profile_listings)
+        )
+        if send_callback:
+            await send_callback(msg)
+
+        return False
+
 
 
     @app_commands.command(

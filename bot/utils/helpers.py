@@ -1,8 +1,14 @@
 from typing import Callable, Optional, Union
 
+import aiohttp
+import json
 import discord
 from discord.abc import Messageable
+from discord import Message
 
+from typing import Iterable
+
+from bot.core.bot import Bot
 from bot.utils.logger import logger
 from bot.utils.settings import settings
 from bot.utils.types import (
@@ -17,45 +23,51 @@ from bot.utils.types import (
 
 async def send_as_profile(
     profile_trigger: str,
-    channel: Messageable,
+    channel: discord.abc.Messageable,
     content: str,
     *,
-    attachments: Optional[list["discord.File"]] = None,
+    user: discord.abc.Snowflake,
+    reply_to: Optional[discord.Message] = None,
+    attachments: Optional[Iterable[discord.File]] = None,
     send_callback: Optional[Callable[[str], None]] = None,
     rm_thinking_callback: Optional[Callable[[], None]] = None,
 ) -> bool:
-    """Send a message in a channel using the impersonation profile matching the trigger.
+    """
+    Send a message in a channel using the impersonation profile matching the trigger,
+    with optional quoting for replies.
 
     Args:
-        profile_trigger (str): Trigger string to find the impersonation profile.
-        channel (Messageable): The Discord channel or thread to send the message in.
-        content (str): The message content to send.
-        attachments (Optional[list["discord.File"]]): Optional attachments to include.
-        send_callback (Optional[Callable[[str], None]]): Optional async callback
-            for sending ephemeral-style error messages (e.g., in slash commands).
-        rm_thinking_callback (Optional[Callable[[], None]]): Optional async callback
-            to remove the original "thinking..." response.
+        profile_trigger: Trigger string to find the impersonation profile.
+        channel: Channel or thread to send the message in.
+        content: The message content.
+        user: The Discord user performing the action (for is_allowed_user checks).
+        reply_to: Optional Message to visually reply to.
+        attachments: Optional list of discord.File attachments.
+        send_callback: Optional async callback for error messages.
+        rm_thinking_callback: Optional async callback to remove "thinking..." messages.
 
     Returns:
-        bool: True if the message was sent successfully, False otherwise.
+        True if the message was sent successfully, False otherwise.
     """
-    # Check if RP is enabled in this channel
+
+    # --- Check RP enabled ---
     if not is_rp_enabled(channel):
         msg = f"RP is not enabled in this channel ({get_channel_id(channel)})."
         if send_callback:
             await send_callback(msg)
-        logger.warn(msg)
         return False
 
-    # Find the profile by trigger
+    # --- Find impersonation profile ---
     profile = next(
-        (p for p in settings.impersonation_profiles if profile_trigger in p.triggers),
+        (p for p in settings.impersonation_profiles
+         if profile_trigger.lower() in p.triggers and p.is_allowed_user(user.id)),
         None,
     )
     if not profile:
         profile_listings = [
             f"- **{p.username}**: " + ", ".join(f"`{t}`" for t in p.triggers)
             for p in settings.impersonation_profiles
+            if p.is_allowed_user(user.id)
         ]
         msg = (
             f"No impersonation profile found for trigger '{profile_trigger}'.\n\n"
@@ -64,37 +76,76 @@ async def send_as_profile(
         )
         if send_callback:
             await send_callback(msg)
-        logger.warn(f"No impersonation profile found for trigger '{profile_trigger}'.")
         return False
 
-    if not isinstance(channel, Messageable):
+    # --- Ensure channel is valid ---
+    if not isinstance(channel, discord.abc.Messageable):
         msg = "Cannot send message in this channel."
         if send_callback:
             await send_callback(msg)
-        logger.warn(msg)
         return False
 
     try:
+        # --- Get or create webhook ---
         webhook = await get_or_create_webhook(channel)
+
+        # --- Format content with quote if replying ---
+        def format_reply(content: str, reply_msg: Optional[discord.Message]) -> str:
+            if reply_msg and not getattr(reply_msg.flags, "ephemeral", False):
+                # Include first 200 characters of original content for clarity
+                quoted = reply_msg.content.replace("\n", " ")[:200]
+                return f"> {reply_msg.author.display_name}: {quoted}\n{content}"
+            return content
+
+        formatted_content = format_reply(content, reply_to)
+
+        # --- Send message via webhook ---
         await webhook.send(
-            content,
+            formatted_content,
             username=profile.username,
             avatar_url=profile.avatar_url,
             files=attachments if attachments else []
         )
-        logger.info(f"Sent message as {profile.username} in channel {get_channel_id(channel)}")
 
-        # Remove the "thinking..." message if callback is provided
+        # --- Remove "thinking..." message if needed ---
         if rm_thinking_callback:
             await rm_thinking_callback()
 
         return True
+
     except Exception as e:
         msg = f"Failed to send impersonated message: {e}"
         if send_callback:
             await send_callback(msg)
-        logger.warn(msg)
         return False
+
+
+async def resolve_message_reference(bot: Bot, reference: discord.MessageReference) -> discord.Message | None:
+    """
+    Turn a MessageReference into a full Message object.
+    Returns None if the message cannot be fetched.
+    
+    bot: your discord.py bot instance
+    reference: the MessageReference object
+    """
+    if reference is None or reference.message_id is None:
+        return None
+
+    # Try to get the channel first
+    channel = bot.get_channel(reference.channel_id)
+    if channel is None:
+        try:
+            # fallback: fetch channel from API
+            channel = await bot.fetch_channel(reference.channel_id)
+        except (discord.NotFound, discord.Forbidden):
+            return None
+
+    try:
+        # Fetch the actual message
+        message = await channel.fetch_message(reference.message_id)
+        return message
+    except (discord.NotFound, discord.Forbidden):
+        return None
 
 
 async def get_or_create_webhook(channel: discord.TextChannel) -> discord.Webhook:

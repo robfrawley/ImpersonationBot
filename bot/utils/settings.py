@@ -20,6 +20,20 @@ class ImpersonationProfile(BaseModel):
     dossier_url: str | None = None
     keyart_url: str | None = None
     power_url: str | None = None
+    restricted_users: list[int] | None = None
+
+    def is_allowed_user(self, user_id: int) -> bool:
+        """Check if a user ID is allowed to use this profile.
+
+        Args:
+            user_id: The Discord user ID to check.
+
+        Returns:
+            True if the user is allowed to use this profile, False otherwise.
+        """
+        if self.restricted_users is None:
+            return True
+        return user_id in self.restricted_users
 
 
 class SettingsManager(BaseSettings):
@@ -66,6 +80,9 @@ class SettingsManager(BaseSettings):
         all_triggers: set[str] = set()
 
         for profile in v:
+            if "restricted_users" in profile and isinstance(profile["restricted_users"], str):
+                profile["restricted_users"] = [int(x) for x in json.loads(profile["restricted_users"])]
+
             # Ensure triggers is a list
             if isinstance(profile.get("triggers"), str):
                 profile["triggers"] = json.loads(profile["triggers"])

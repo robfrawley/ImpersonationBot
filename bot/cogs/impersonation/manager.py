@@ -5,7 +5,7 @@ from discord.ext import commands
 from bot.core.bot import Bot
 from bot.utils.settings import settings
 from bot.utils.logger import logger
-from bot.utils.helpers import is_rp_enabled, send_as_profile, get_channel_id
+from bot.utils.helpers import is_rp_enabled, send_as_profile, get_channel_id, resolve_message_reference
 
 
 # ----------------------------------------------------------------------
@@ -44,7 +44,10 @@ class ImpersonationManager(commands.Cog):
         # Define inline callbacks
         async def send_callback(msg: str):
             """Send an ephemeral-style error message in the same channel."""
-            logger.warn(f"Failed to send ephemeral error message: {msg}")
+            try:
+                await message.channel.send(f"⚠️ {msg}", delete_after=10)
+            except Exception as e:
+                logger.warn(f"Failed to send ephemeral error message: {e}")
 
         async def rm_thinking():
             """Remove the original 'thinking...' message if present."""
@@ -80,14 +83,19 @@ class ImpersonationManager(commands.Cog):
             await attachment.to_file() for attachment in message.attachments
         ] if message.attachments else []
 
+        # get relied message if it exists
+        reply_to = await resolve_message_reference(self.bot, message.reference) if message.reference else None
+
         # Send the message via impersonation profile
         success = await send_as_profile(
             profile_trigger=trigger_part,
+            user=message.author,
             channel=message.channel,
             content=content_part,
             attachments=files,
             send_callback=send_callback,
             rm_thinking_callback=rm_thinking,
+            reply_to=reply_to,
         )
 
         # Delete the original message after sending
@@ -96,12 +104,12 @@ class ImpersonationManager(commands.Cog):
             if success:
                 logger.debug(
                     f"Processed impersonation message from {message.author} "
-                    f"in channel {get_channel_id(message.channel)} with trigger '{trigger_part}'"
+                    f"in channel {get_channel_id(message.channel)} with trigger '{trigger_part}': \"{content_part}\""
                 )
             else:
                 logger.debug(
                     f"Failed to send impersonation message from {message.author} "
-                    f"in channel {get_channel_id(message.channel)} with trigger '{trigger_part}'"
+                    f"in channel {get_channel_id(message.channel)} with trigger '{trigger_part}': \"{content_part}\""
                 )
         except Exception as e:
             logger.warn(f"Failed to delete message: {e}")
