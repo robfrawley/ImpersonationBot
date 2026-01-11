@@ -5,11 +5,20 @@ from discord.app_commands import AppCommand
 
 from bot.utils.logger import logger
 from bot.utils.settings import settings
+from bot.db.database import Database
+from bot.db.user_config import UserConfigModel
 
 # List of bot extensions (cogs) to load
 EXTENSIONS: list[str] = [
     "bot.cogs.impersonation",
 ]
+
+# ----------------------------------------------------------------------
+# Globals
+# ----------------------------------------------------------------------
+
+db = Database("bot/db/config.db")
+user_config: UserConfigModel | None = None
 
 
 class Bot(commands.Bot):
@@ -28,6 +37,14 @@ class Bot(commands.Bot):
 
     async def on_ready(self) -> None:
         """Called when the bot has connected and is ready."""
+        global user_config
+
+        await db.connect()
+        user_config = UserConfigModel(db)
+
+        logger.debug("Database connected and UserConfigModel initialized.")
+        logger.info(f"Bot is ready. Logged in as {self.user} (ID: {self.user.id})")
+
         logger.info("Loading extensions...")
 
         for ext in EXTENSIONS:
@@ -59,7 +76,7 @@ class Bot(commands.Bot):
 
         # List of cogs and functions to process messages
         COGS_TO_TRACK: list[tuple[str, str]] = [
-            ("ImpersonationManager", "track_messages"),
+            ("ImpersonationMessageTracker", "track_messages"),
         ]
 
         for cog_name, func_name in COGS_TO_TRACK:

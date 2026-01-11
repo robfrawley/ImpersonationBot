@@ -2,6 +2,7 @@ import discord
 from discord import Message
 from discord.ext import commands
 
+from bot.core.bot import user_config
 from bot.core.bot import Bot
 from bot.utils.settings import settings
 from bot.utils.logger import logger
@@ -9,15 +10,15 @@ from bot.utils.helpers import is_rp_enabled, send_as_profile, get_channel_id, re
 
 
 # ----------------------------------------------------------------------
-# ImpersonationManager Cog
+# ImpersonationMessageTracker Cog
 # ----------------------------------------------------------------------
 
-class ImpersonationManager(commands.Cog):
+class ImpersonationMessageTracker(commands.Cog):
     """Cog responsible for tracking messages in enabled channels."""
 
     def __init__(self, bot: Bot) -> None:
         """
-        Initialize the ImpersonationManager.
+        Initialize the ImpersonationMessageTracker.
 
         Args:
             bot: Instance of the bot.
@@ -54,19 +55,41 @@ class ImpersonationManager(commands.Cog):
             # In track_messages, nothing special to delete before sending
             pass  # No-op, kept for interface compatibility
 
-        # Expect format: `trigger: message content`
-        if not message.content or ":" not in message.content:
+        content = message.content.strip() if message.content else ""
+
+        if not content and not message.attachments:
+            # Empty message with no attachments, delete it
             try:
                 await message.delete()
                 logger.debug(
-                    f"Deleted message from {message.author} in {message.channel.id} "
-                    "for invalid format (missing colon)."
+                    f"Deleted empty message from {message.author} in {message.channel.id}."
                 )
             except Exception as e:
                 logger.warn(f"Failed to delete message: {e}")
             return
 
-        trigger_part, content_part = map(str.strip, message.content.split(":", 1))
+        # Expect format: `trigger: message content`
+        if ":" not in content or content.startswith("https://"):
+            # Check if user has a default trigger
+            user_id = message.author.id
+            default_trigger = await user_config.get_default_trigger(user_id)
+
+            if default_trigger:
+                # Prepend default trigger to message
+                content = f"{default_trigger}:{content}"
+            else:
+                # No trigger found, delete the message
+                try:
+                    await message.delete()
+                    logger.debug(
+                        f"Deleted message from {message.author} in {message.channel.id} "
+                        "for missing trigger."
+                    )
+                except Exception as e:
+                    logger.warn(f"Failed to delete message: {e}")
+                return
+
+        trigger_part, content_part = map(str.strip, content.split(":", 1))
         if not trigger_part:
             try:
                 await message.delete()
@@ -88,6 +111,7 @@ class ImpersonationManager(commands.Cog):
 
         # Send the message via impersonation profile
         success = await send_as_profile(
+            bot=self.bot,
             profile_trigger=trigger_part,
             user=message.author,
             channel=message.channel,

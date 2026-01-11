@@ -1,26 +1,33 @@
 import discord
+
 from bot.core.bot import Bot
 from bot.utils.settings import settings
+from bot.utils.logger import logger
+
 
 # ----------------------------------------------------------------------
-# Bot Entry Point
+# Bot setup (MUST be top-level)
+# ----------------------------------------------------------------------
+
+intents = discord.Intents.all()
+intents.message_content = True
+
+bot = Bot(
+    command_prefix="i!",
+    intents=intents,
+    help_command=None,
+)
+
+
+# ----------------------------------------------------------------------
+# Entry point
 # ----------------------------------------------------------------------
 
 def main() -> None:
-    """Initialize and run the Discord bot."""
-    # Configure intents
-    intents = discord.Intents.all()
-    intents.message_content = True  # Enable message content intent
-
-    # Initialize bot
-    bot = Bot(
-        command_prefix="i!",
-        intents=intents,
-        help_command=None,  # Disable default help command
-    )
-
-    # Run bot using token from settings
-    bot.run(settings.discord_token)
+    try:
+        bot.run(settings.discord_token)
+    except KeyboardInterrupt:
+        logger.info("Bot is shutting down...")
 
 
 if __name__ == "__main__":

@@ -2,11 +2,14 @@ from typing import Callable, Optional, Union
 
 import aiohttp
 import json
+import re
+import aiohttp
 import discord
 from discord.abc import Messageable
 from discord import Message
+from discord import File
 
-from typing import Iterable
+from typing import Iterable, Optional
 
 from bot.core.bot import Bot
 from bot.utils.logger import logger
@@ -26,6 +29,7 @@ async def send_as_profile(
     channel: discord.abc.Messageable,
     content: str,
     *,
+    bot: Bot,
     user: discord.abc.Snowflake,
     reply_to: Optional[discord.Message] = None,
     attachments: Optional[Iterable[discord.File]] = None,
@@ -45,6 +49,7 @@ async def send_as_profile(
         attachments: Optional list of discord.File attachments.
         send_callback: Optional async callback for error messages.
         rm_thinking_callback: Optional async callback to remove "thinking..." messages.
+        bot: Bot instance for emoji conversion.
 
     Returns:
         True if the message was sent successfully, False otherwise.
@@ -87,24 +92,24 @@ async def send_as_profile(
 
     try:
         # --- Get or create webhook ---
-        webhook = await get_or_create_webhook(channel)
+        webhook = await get_or_create_webhook(channel, profile)
 
         # --- Format content with quote if replying ---
-        def format_reply(content: str, reply_msg: Optional[discord.Message]) -> str:
+        async def format_reply(content: str, reply_msg: Optional[discord.Message]) -> tuple[str, list[discord.File]]:
             if reply_msg and not getattr(reply_msg.flags, "ephemeral", False):
                 # Include first 200 characters of original content for clarity
                 quoted = reply_msg.content.replace("\n", " ")[:200]
                 return f"> {reply_msg.author.display_name}: {quoted}\n{content}"
-            return content
+            return await convert_emojis_and_attachments_for_webhook(bot=bot, text=content, attachments={})
 
-        formatted_content = format_reply(content, reply_to)
+        formatted_content, files_to_send = await format_reply(content, reply_to)
 
         # --- Send message via webhook ---
         await webhook.send(
             formatted_content,
             username=profile.username,
             avatar_url=profile.avatar_url,
-            files=attachments if attachments else []
+            files=attachments if attachments else [] + files_to_send,
         )
 
         # --- Remove "thinking..." message if needed ---
@@ -118,6 +123,67 @@ async def send_as_profile(
         if send_callback:
             await send_callback(msg)
         return False
+
+
+EMOJI_PATTERN = re.compile(
+    r"(?<!<):([a-zA-Z0-9_]+):(?!\d+>)"
+)
+
+
+async def convert_emojis_and_attachments_for_webhook(
+    *,
+    bot: discord.Client,
+    text: str,
+    attachments: Optional[Iterable[discord.File]] = None,
+    external_emoji_map: Optional[dict[str, str]] = None,
+) -> tuple[str, list[discord.File]]:
+    """
+    Converts :emoji_name: into:
+      - <:name:id> or <a:name:id> if the bot has access
+      - uploaded image fallback if provided in external_emoji_map
+
+    Returns:
+      (converted_text, combined_files)
+    """
+
+    files: list[discord.File] = list(attachments or [])
+
+    async def resolve(match: re.Match) -> str:
+        name = match.group(1)
+
+        # 1️⃣ Try server emojis the bot can access
+        for guild in bot.guilds:
+            emoji = discord.utils.get(guild.emojis, name=name)
+            if emoji:
+                return f"<{'a' if emoji.animated else ''}:{emoji.name}:{emoji.id}>"
+
+        # 2️⃣ External emoji fallback → upload image
+        if external_emoji_map and name in external_emoji_map:
+            url = external_emoji_map[name]
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        filename = f"{name}.png"
+                        files.append(File(fp=data, filename=filename))
+                        return f"[{name}]({filename})"
+
+        # 3️⃣ Not found → leave original text
+        return match.group(0)
+
+    converted_parts = []
+    last_end = 0
+
+    for match in EMOJI_PATTERN.finditer(text):
+        converted_parts.append(text[last_end:match.start()])
+        converted_parts.append(await resolve(match))
+        last_end = match.end()
+
+    converted_parts.append(text[last_end:])
+
+    converted_text = "".join(converted_parts)
+
+    return converted_text, files
 
 
 async def resolve_message_reference(bot: Bot, reference: discord.MessageReference) -> discord.Message | None:
@@ -148,23 +214,45 @@ async def resolve_message_reference(bot: Bot, reference: discord.MessageReferenc
         return None
 
 
-async def get_or_create_webhook(channel: discord.TextChannel) -> discord.Webhook:
-    """Fetch an existing webhook for the bot in the channel or create one if none exists.
+async def get_or_create_webhook(channel: discord.TextChannel, profile: "ImpersonationProfile") -> discord.Webhook:
+    """
+    Fetch an existing webhook for the given impersonation profile in the channel,
+    or create one if none exists.
 
     Args:
         channel (discord.TextChannel): The channel to fetch or create a webhook in.
+        profile (ImpersonationProfile): The impersonation profile to use.
 
     Returns:
-        discord.Webhook: The existing or newly created webhook.
+        discord.Webhook: The existing or newly created webhook for the profile.
     """
+    profile_webhook_name = f"RP: {profile.username}"
+
+    # Fetch all webhooks in the channel
     webhooks = await channel.webhooks()
     for webhook in webhooks:
-        # Return the webhook owned by the bot
-        if webhook.user == channel.guild.me:
+        # Return webhook if it's owned by the bot and matches the profile's name
+        if webhook.user == channel.guild.me and webhook.name == profile_webhook_name:
+            logger.debug(f"Found existing webhook '{webhook.name}' for profile '{profile.username}' in channel {channel.id}.")
             return webhook
 
-    # No webhook exists, create one
-    return await channel.create_webhook(name="Impersonator")
+    # No matching webhook found, create a new one
+    avatar_bytes = None
+    if profile.avatar_url:
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(profile.avatar_url) as resp:
+                    if resp.status == 200:
+                        avatar_bytes = await resp.read()
+        except Exception:
+            pass  # fallback to no avatar if download fails
+
+    logger.debug(f"Creating new webhook '{profile_webhook_name}' for profile '{profile.username}' in channel {channel.id}.")
+    return await channel.create_webhook(
+        name=profile_webhook_name,
+        avatar=avatar_bytes
+    )
 
 
 def is_rp_enabled(channel: AllowedChannelMixed) -> bool:

@@ -6,6 +6,7 @@ from discord.ext import commands
 
 from typing import Any
 
+from bot.core.bot import user_config
 from bot.utils.logger import logger
 from bot.utils.settings import settings, ImpersonationProfile
 from bot.utils.helpers import (
@@ -19,8 +20,7 @@ from bot.utils.helpers import (
 from bot.utils.types import AllowedChannel
 
 
-
-class ImpersonationCommands(commands.Cog):
+class ImpersonationCommandHandler(commands.Cog):
     """Cog containing RP (roleplay) system commands."""
 
     def __init__(self, bot: commands.Bot):
@@ -32,11 +32,48 @@ class ImpersonationCommands(commands.Cog):
         """
         self.bot = bot
 
+    async def trigger_autocomplete(self, interaction: Interaction, current: str):
+        """Autocomplete first triggers, showing user's current default at the top."""
+        choices = []
+
+        # Get user's current default trigger
+        user_id = interaction.user.id
+        current_default = await user_config.get_default_trigger(user_id)
+        if current_default:
+            # Show current default at the top
+            choices.append(app_commands.Choice(
+                name=f"Current default: {current_default}",
+                value=current_default
+            ))
+
+        # Add first trigger of each profile (skip duplicates)
+        added = {current_default} if current_default else set()
+        for profile in settings.impersonation_profiles:
+            if not profile.triggers:
+                continue
+            first_trigger = profile.triggers[0]
+            if first_trigger in added:
+                continue
+            if current.lower() in first_trigger.lower():
+                choices.append(app_commands.Choice(
+                    name=f"{profile.username}",
+                    value=first_trigger
+                ))
+                added.add(first_trigger)
+            if len(choices) >= 25:  # Discord limit
+                break
+
+        return choices
+
     @app_commands.command(
         name="rp",
         description="Send a message as a configured impersonation profile"
     )
-    @app_commands.describe(trigger="Trigger of the impersonation profile", message="Message to send")
+    @app_commands.describe(
+        trigger="Trigger of the impersonation profile",
+        message="Message to send"
+    )
+    @app_commands.autocomplete(trigger=trigger_autocomplete)
     async def rp(
         self,
         interaction: Any,
@@ -67,6 +104,7 @@ class ImpersonationCommands(commands.Cog):
 
         # Send the impersonated message
         send_success: ImpersonationProfile | bool = await send_as_profile(
+            bot=self.bot,
             profile_trigger=trigger,
             user=interaction.user,
             channel=interaction.channel,
@@ -75,6 +113,33 @@ class ImpersonationCommands(commands.Cog):
             rm_thinking_callback=remove_thinking,
         )
 
+    @app_commands.command(
+        name="rp_default",
+        description="Set or unset a default profile for your RP messages"
+    )
+    @app_commands.describe(
+        trigger="The trigger of the impersonation profile to set as default. Leave empty to unset."
+    )
+    @app_commands.autocomplete(trigger=trigger_autocomplete)
+    async def rp_default(self, interaction: Interaction, trigger: str | None = None):
+        """Set or unset a default profile for your RP messages."""
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+
+        if not trigger or trigger.strip() == "":
+            # Unset default
+            await user_config.unset_default_trigger(user_id)
+            await interaction.followup.send(
+                "✅ Your default RP profile has been unset.",
+                ephemeral=True
+            )
+        else:
+            # Set default
+            await user_config.set_default_trigger(user_id, trigger.strip())
+            await interaction.followup.send(
+                f"✅ Your default RP profile has been set to: `{trigger.strip()}`",
+                ephemeral=True
+            )
 
     @app_commands.command(
         name="rp_help",

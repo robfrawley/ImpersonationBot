@@ -10,3 +10,4 @@ pydantic-settings
 
 # Files
 aiofiles
+aiosqlite
