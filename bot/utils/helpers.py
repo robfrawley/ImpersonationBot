@@ -3,13 +3,15 @@ from typing import Callable, Optional, Union
 import aiohttp
 import json
 import re
-import aiohttp
+import io
 import discord
 from discord.abc import Messageable
-from discord import Message
-from discord import File
+from discord import Message, File, StickerItem
 
 from typing import Iterable, Optional
+
+from lottie import objects, importers, exporters
+from PIL import Image
 
 from bot.core.bot import Bot
 from bot.utils.logger import logger
@@ -51,38 +53,25 @@ async def send_as_profile(
     *,
     bot: Bot,
     user: discord.abc.Snowflake,
-    reply_to: Optional[discord.Message] = None,
-    attachments: Optional[Iterable[discord.File]] = None,
-    send_callback: Optional[Callable[[str], None]] = None,
-    rm_thinking_callback: Optional[Callable[[], None]] = None,
-) -> bool:
+    reply_to: discord.Message | None = None,
+    attachments: Iterable[discord.File] | None = None,
+    stickers: Iterable[discord.StickerItem] | None = None,
+    send_callback: Callable[[str], None] | None = None,
+    rm_thinking_callback: Callable[[], None] | None = None,
+) -> discord.Message | None:
     """
-    Send a message in a channel using the impersonation profile matching the trigger,
-    with optional quoting for replies.
-
-    Args:
-        profile_trigger: Trigger string to find the impersonation profile.
-        channel: Channel or thread to send the message in.
-        content: The message content.
-        user: The Discord user performing the action (for is_allowed_user checks).
-        reply_to: Optional Message to visually reply to.
-        attachments: Optional list of discord.File attachments.
-        send_callback: Optional async callback for error messages.
-        rm_thinking_callback: Optional async callback to remove "thinking..." messages.
-        bot: Bot instance for emoji conversion.
+    Send a message via webhook impersonation.
 
     Returns:
-        True if the message was sent successfully, False otherwise.
+        The new webhook message ID if sent successfully, otherwise None.
     """
 
-    # --- Check RP enabled ---
     if not is_rp_enabled(channel):
         msg = f"RP is not enabled in this channel ({get_channel_id(channel)})."
         if send_callback:
             await send_callback(msg)
-        return False
+        return None
 
-    # --- Find impersonation profile ---
     profile = get_profile_by_trigger_and_user(profile_trigger, user)
 
     if not profile:
@@ -98,54 +87,103 @@ async def send_as_profile(
         )
         if send_callback:
             await send_callback(msg)
-        return False
+        return None
 
-    # --- Ensure channel is valid ---
     if not isinstance(channel, discord.abc.Messageable):
-        msg = "Cannot send message in this channel."
         if send_callback:
-            await send_callback(msg)
-        return False
+            await send_callback("Cannot send message in this channel.")
+        return None
 
     try:
-        # --- Get or create webhook ---
         webhook = await get_or_create_webhook(channel, profile)
 
-        # --- Format content with quote if replying ---
-        async def format_reply(content: str, reply_msg: Optional[discord.Message]) -> tuple[str, list[discord.File]]:
+        async def format_reply(
+            content: str,
+            reply_msg: discord.Message | None
+        ) -> tuple[str, list[discord.File]]:
             if reply_msg and not getattr(reply_msg.flags, "ephemeral", False):
-                # Include first 200 characters of original content for clarity
                 quoted = reply_msg.content.replace("\n", " ")[:200]
-                return f"> {reply_msg.author.display_name}: {quoted}\n{content}"
-            return await convert_emojis_and_attachments_for_webhook(bot=bot, text=content, attachments={})
+                return (
+                    f"> {reply_msg.author.display_name}: {quoted}\n{content}",
+                    []
+                )
+            return await convert_emojis_and_attachments_for_webhook(
+                bot=bot,
+                text=content,
+                attachments={}
+            )
 
         formatted_content, files_to_send = await format_reply(content, reply_to)
 
-        # --- Send message via webhook ---
-        await webhook.send(
+        for sticker in stickers or []:
+            try:
+                sticker_file = await fetch_sticker_as_file_safe(
+                    sticker,
+                    guild=getattr(channel, "guild", None)
+                )
+                files_to_send.append(sticker_file)
+            except Exception as e:
+                logger.warn(f"Failed to fetch sticker {sticker.name}: {e}")
+
+        message: discord.Message = await webhook.send(
             formatted_content,
             username=profile.username,
             avatar_url=profile.avatar_url,
-            files=attachments if attachments else [] + files_to_send,
+            files=(list(attachments) if attachments else []) + files_to_send,
+            wait=True,
         )
 
-        # --- Remove "thinking..." message if needed ---
         if rm_thinking_callback:
             await rm_thinking_callback()
 
-        return True
+        return message
 
     except Exception as e:
-        msg = f"Failed to send impersonated message: {e}"
         if send_callback:
-            await send_callback(msg)
-        return False
+            await send_callback(f"Failed to send impersonated message: {e}")
+        return None
 
+
+async def fetch_sticker_as_file_safe(sticker, guild=None):
+    """
+    Returns a discord.File for a sticker if possible.
+    - Converts Lottie guild stickers to GIF.
+    - Uses CDN URL for static external stickers.
+    - Skips animated external stickers (cannot convert).
+    """
+    # Try to fetch full Sticker if in a guild
+    if guild:
+        try:
+            sticker = await guild.fetch_sticker(sticker.id)
+        except Exception:
+            pass  # external/global sticker
+
+    # Static stickers (PNG/APNG)
+    if getattr(sticker, "format_type", 1) in {1, 3}:
+        # Use URL if possible, fallback to CDN
+        url = getattr(sticker, "url", f"https://cdn.discordapp.com/stickers/{sticker.id}.png")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                data = await resp.read()
+        return File(io.BytesIO(data), filename=f"{sticker.name}.png")
+
+    # Lottie stickers (only guild stickers supported)
+    if getattr(sticker, "format_type", 0) == 2:
+        if hasattr(sticker, "url"):
+            async with aiohttp.ClientSession() as session:
+                async with session.get(sticker.url) as resp:
+                    data = await resp.read()
+            from lottie import importers, exporters
+            animation = importers.from_bytes(data)
+            gif_bytes = exporters.to_bytes(animation, format="gif")
+            return File(io.BytesIO(gif_bytes), filename=f"{sticker.name}.gif")
+        else:
+            logger.warn(f"Sticker {sticker.name} has no URL to fetch Lottie data.")
+            return None
 
 EMOJI_PATTERN = re.compile(
     r"(?<!<):([a-zA-Z0-9_]+):(?!\d+>)"
 )
-
 
 async def convert_emojis_and_attachments_for_webhook(
     *,
@@ -201,34 +239,6 @@ async def convert_emojis_and_attachments_for_webhook(
     converted_text = "".join(converted_parts)
 
     return converted_text, files
-
-
-async def resolve_message_reference(bot: Bot, reference: discord.MessageReference) -> discord.Message | None:
-    """
-    Turn a MessageReference into a full Message object.
-    Returns None if the message cannot be fetched.
-    
-    bot: your discord.py bot instance
-    reference: the MessageReference object
-    """
-    if reference is None or reference.message_id is None:
-        return None
-
-    # Try to get the channel first
-    channel = bot.get_channel(reference.channel_id)
-    if channel is None:
-        try:
-            # fallback: fetch channel from API
-            channel = await bot.fetch_channel(reference.channel_id)
-        except (discord.NotFound, discord.Forbidden):
-            return None
-
-    try:
-        # Fetch the actual message
-        message = await channel.fetch_message(reference.message_id)
-        return message
-    except (discord.NotFound, discord.Forbidden):
-        return None
 
 
 async def get_or_create_webhook(channel: discord.TextChannel, profile: "ImpersonationProfile") -> discord.Webhook:

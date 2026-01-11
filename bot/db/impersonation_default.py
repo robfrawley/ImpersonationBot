@@ -1,12 +1,21 @@
 from bot.db.database import Database
 
-class UserConfigModel:
+class ImpersonationDefaultRepo:
     def __init__(self, db: Database):
         if db.conn is None:
             raise RuntimeError("Database is not connected")
         self.db = db
 
-    async def get_default_trigger(self, user_id: int) -> str | None:
+    async def init_schema(self) -> None:
+        await self.db.conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_triggers (
+                user_id INTEGER PRIMARY KEY,
+                default_trigger TEXT CHECK (default_trigger IS NULL OR length(default_trigger) < 255)
+            )
+        """)
+        await self.db.conn.commit()
+
+    async def get(self, user_id: int) -> str | None:
         """Return the user's default trigger, or None if not set."""
         async with self.db.conn.execute(
             "SELECT default_trigger FROM user_triggers WHERE user_id = ?",
@@ -17,7 +26,7 @@ class UserConfigModel:
                 return None
             return row[0]  # default_trigger or None
 
-    async def set_default_trigger(self, user_id: int, trigger: str):
+    async def set(self, user_id: int, trigger: str):
         """
         Set or update the user's default trigger.
         Creates a row if it doesn't exist.
@@ -32,7 +41,7 @@ class UserConfigModel:
         )
         await self.db.conn.commit()
 
-    async def unset_default_trigger(self, user_id: int):
+    async def unset(self, user_id: int):
         """
         Unset the user's default trigger (sets to NULL).
         Creates a row if it doesn't exist to avoid errors.

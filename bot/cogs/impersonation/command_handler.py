@@ -6,7 +6,8 @@ from discord.ext import commands
 
 from typing import Any
 
-from bot.core.bot import user_config
+from bot.core.bot import impersonation_default
+from bot.core.bot import impersonation_history
 from bot.utils.logger import logger
 from bot.utils.settings import settings, ImpersonationProfile
 from bot.utils.helpers import (
@@ -39,7 +40,7 @@ class ImpersonationCommandHandler(commands.Cog):
 
         # Get user's current default trigger
         user_id = interaction.user.id
-        current_default = await user_config.get_default_trigger(user_id)
+        current_default = await impersonation_default.get(user_id)
 
         # Add first trigger of each profile
         for profile in settings.impersonation_profiles:
@@ -102,7 +103,7 @@ class ImpersonationCommandHandler(commands.Cog):
                 pass
 
         # Send the impersonated message
-        send_success: ImpersonationProfile | bool = await send_as_profile(
+        message_sent: discord.Message | None = await send_as_profile(
             bot=self.bot,
             profile_trigger=trigger,
             user=interaction.user,
@@ -111,6 +112,10 @@ class ImpersonationCommandHandler(commands.Cog):
             send_callback=send_callback,
             rm_thinking_callback=remove_thinking,
         )
+
+        if message_sent:
+            # Track the impersonated message
+            await impersonation_history.add(interaction.user.id, message_sent.id)
 
     @app_commands.command(
         name="rp_default",
@@ -127,7 +132,7 @@ class ImpersonationCommandHandler(commands.Cog):
 
         if not trigger or trigger.strip() == "":
             # Unset default
-            await user_config.unset_default_trigger(user_id)
+            await impersonation_default.unset(user_id)
             await interaction.followup.send(
                 **build_discord_embed(
                     title="✅ Default RP Profile Unset",
@@ -137,7 +142,7 @@ class ImpersonationCommandHandler(commands.Cog):
             )
         else:
             # Set default
-            await user_config.set_default_trigger(user_id, trigger.strip())
+            await impersonation_default.set(user_id, trigger.strip())
             profile: ImpersonationProfile | None = get_profile_by_trigger_and_user(trigger.strip(), interaction.user)
 
             if not profile:
@@ -152,6 +157,7 @@ class ImpersonationCommandHandler(commands.Cog):
                     ephemeral=True
                 )
             else:
+                power_url = profile.power_url if profile.power_url else "No power image set."
                 await interaction.followup.send(
                     **build_discord_embed_with_thumbnail(
                         title="✅ Default RP Profile Set",

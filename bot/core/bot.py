@@ -6,7 +6,8 @@ from discord.app_commands import AppCommand
 from bot.utils.logger import logger
 from bot.utils.settings import settings
 from bot.db.database import Database
-from bot.db.user_config import UserConfigModel
+from bot.db.impersonation_default import ImpersonationDefaultRepo
+from bot.db.impersonation_history import ImpersonationHistoryRepo
 
 # List of bot extensions (cogs) to load
 EXTENSIONS: list[str] = [
@@ -17,8 +18,9 @@ EXTENSIONS: list[str] = [
 # Globals
 # ----------------------------------------------------------------------
 
-db = Database("bot/db/config.db")
-user_config: UserConfigModel | None = None
+db = Database(settings.sqlite_db_path)
+impersonation_default: ImpersonationDefaultRepo | None = None
+impersonation_history: ImpersonationHistoryRepo | None = None
 
 
 class Bot(commands.Bot):
@@ -37,12 +39,18 @@ class Bot(commands.Bot):
 
     async def on_ready(self) -> None:
         """Called when the bot has connected and is ready."""
-        global user_config
+        global impersonation_default
+        global impersonation_history
 
         await db.connect()
-        user_config = UserConfigModel(db)
 
-        logger.debug("Database connected and UserConfigModel initialized.")
+        impersonation_default = ImpersonationDefaultRepo(db)
+        impersonation_history = ImpersonationHistoryRepo(db)
+
+        await impersonation_default.init_schema()
+        await impersonation_history.init_schema()
+
+        logger.debug("Database connected and ImpersonationDefaultRepo initialized.")
         logger.info(f"Bot is ready. Logged in as {self.user} (ID: {self.user.id})")
 
         logger.info("Loading extensions...")

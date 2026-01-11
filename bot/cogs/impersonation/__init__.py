@@ -1,5 +1,6 @@
 from bot.cogs.impersonation.message_tracker import ImpersonationMessageTracker
 from bot.cogs.impersonation.command_handler import ImpersonationCommandHandler
+from bot.cogs.impersonation.reacted_tracker import ImpersonationReactedTracker
 from discord.ext import commands
 
 
@@ -14,3 +15,4 @@ async def setup(bot: commands.Bot) -> None:
     """
     await bot.add_cog(ImpersonationMessageTracker(bot))
     await bot.add_cog(ImpersonationCommandHandler(bot))
+    await bot.add_cog(ImpersonationReactedTracker(bot))

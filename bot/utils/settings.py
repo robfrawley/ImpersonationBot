@@ -41,6 +41,7 @@ class SettingsManager(BaseSettings):
 
     impersonation_profiles: list[ImpersonationProfile] = []
     discord_token: str = Field()
+    sqlite_db_path: str = Field()
     debug_mode: bool = Field(default=False)
     bot_timezone: ZoneInfo = Field(default=ZoneInfo("UTC"))
     enabled_channels: list[int] = Field(default=[])

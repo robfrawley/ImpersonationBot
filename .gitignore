@@ -176,4 +176,4 @@ pyrightconfig.json
 # End of https://www.toptal.com/developers/gitignore/api/python
 
 bot/data/submissions/
-bot/db/config.db*
+bot/db/_impersonation_bot.db*

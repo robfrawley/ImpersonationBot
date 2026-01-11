@@ -8,6 +8,12 @@ python-dateutil
 python-dotenv
 pydantic-settings
 
+# images
+lottie
+Pillow
+
 # Files
 aiofiles
+
+# db
 aiosqlite
