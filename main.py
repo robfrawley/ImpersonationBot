@@ -6,7 +6,7 @@ from bot.utils.logger import logger
 
 
 # ----------------------------------------------------------------------
-# Bot setup (MUST be top-level)
+# Bot setup
 # ----------------------------------------------------------------------
 
 intents = discord.Intents.all()
