@@ -13,7 +13,7 @@ from typing import Iterable, Optional
 
 from bot.core.bot import Bot
 from bot.utils.logger import logger
-from bot.utils.settings import settings
+from bot.utils.settings import settings, ImpersonationProfile
 from bot.utils.types import (
     AllowedChannelMixed,
     EmbedAndContentDict,
@@ -22,6 +22,26 @@ from bot.utils.types import (
     RoleLike,
     RolesArg,
 )
+
+def get_profile_by_trigger_and_user(
+    profile_trigger: str,
+    user: discord.abc.Snowflake,
+) -> ImpersonationProfile | None:
+    """
+    Find and return the impersonation profile matching the given trigger
+    that the user is allowed to use.
+
+    Args:
+        profile_trigger: Trigger string to find the impersonation profile.
+        user: The Discord user performing the action (for is_allowed_user checks).  
+    Returns:
+        The matching ImpersonationProfile, or None if not found.
+    """
+    return next(
+        (p for p in settings.impersonation_profiles
+         if profile_trigger.lower() in p.triggers and p.is_allowed_user(user.id)),
+        None,
+    )
 
 
 async def send_as_profile(
@@ -63,11 +83,8 @@ async def send_as_profile(
         return False
 
     # --- Find impersonation profile ---
-    profile = next(
-        (p for p in settings.impersonation_profiles
-         if profile_trigger.lower() in p.triggers and p.is_allowed_user(user.id)),
-        None,
-    )
+    profile = get_profile_by_trigger_and_user(profile_trigger, user)
+
     if not profile:
         profile_listings = [
             f"- **{p.username}**: " + ", ".join(f"`{t}`" for t in p.triggers)
@@ -233,7 +250,7 @@ async def get_or_create_webhook(channel: discord.TextChannel, profile: "Imperson
     for webhook in webhooks:
         # Return webhook if it's owned by the bot and matches the profile's name
         if webhook.user == channel.guild.me and webhook.name == profile_webhook_name:
-            logger.debug(f"Found existing webhook '{webhook.name}' for profile '{profile.username}' in channel {channel.id}.")
+            #logger.debug(f"Found existing webhook '{webhook.name}' for profile '{profile.username}' in channel {channel.id}.")
             return webhook
 
     # No matching webhook found, create a new one

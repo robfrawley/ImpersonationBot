@@ -16,6 +16,7 @@ from bot.utils.helpers import (
     build_discord_embed_with_thumbnail,
     get_or_create_webhook,
     send_as_profile,
+    get_profile_by_trigger_and_user,
 )
 from bot.utils.types import AllowedChannel
 
@@ -39,27 +40,25 @@ class ImpersonationCommandHandler(commands.Cog):
         # Get user's current default trigger
         user_id = interaction.user.id
         current_default = await user_config.get_default_trigger(user_id)
-        if current_default:
-            # Show current default at the top
-            choices.append(app_commands.Choice(
-                name=f"Current default: {current_default}",
-                value=current_default
-            ))
 
-        # Add first trigger of each profile (skip duplicates)
-        added = {current_default} if current_default else set()
+        # Add first trigger of each profile
         for profile in settings.impersonation_profiles:
-            if not profile.triggers:
+            if not profile.triggers or not profile.is_allowed_user(interaction.user.id):
                 continue
+
             first_trigger = profile.triggers[0]
-            if first_trigger in added:
-                continue
+
             if current.lower() in first_trigger.lower():
+                description = f"{profile.username} ({', '.join(profile.triggers)})"
+
+                if current_default in profile.triggers:
+                    description += " [CURRENT DEFAULT]"
+
                 choices.append(app_commands.Choice(
-                    name=f"{profile.username}",
+                    name=description,
                     value=first_trigger
                 ))
-                added.add(first_trigger)
+
             if len(choices) >= 25:  # Discord limit
                 break
 
@@ -130,16 +129,42 @@ class ImpersonationCommandHandler(commands.Cog):
             # Unset default
             await user_config.unset_default_trigger(user_id)
             await interaction.followup.send(
-                "✅ Your default RP profile has been unset.",
+                **build_discord_embed(
+                    title="✅ Default RP Profile Unset",
+                    description="Your default RP profile has been unset."
+                ),
                 ephemeral=True
             )
         else:
             # Set default
             await user_config.set_default_trigger(user_id, trigger.strip())
-            await interaction.followup.send(
-                f"✅ Your default RP profile has been set to: `{trigger.strip()}`",
-                ephemeral=True
-            )
+            profile: ImpersonationProfile | None = get_profile_by_trigger_and_user(trigger.strip(), interaction.user)
+
+            if not profile:
+                await interaction.followup.send(
+                    **build_discord_embed(
+                        title="⚠️ Default RP Profile Warning",
+                        description=(
+                            f"The trigger `{trigger.strip()}` does not match any available profile. "
+                            f"You may not be able to use it until a matching profile is added.",
+                        )
+                    ),
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    **build_discord_embed_with_thumbnail(
+                        title="✅ Default RP Profile Set",
+                        description=(
+                            f"Your default RP profile has been set to **{profile.username}** "
+                            f"(`{trigger.strip()}`).\n\n"
+                            f"You can now send messages normally in chat without specifying a trigger, "
+                            f"though you can still specify a different trigger if desired."
+                        ),
+                        thumbnail_url=profile.bust_url if profile.bust_url else profile.avatar_url,
+                    ),
+                    ephemeral=True,
+                )
 
     @app_commands.command(
         name="rp_help",
