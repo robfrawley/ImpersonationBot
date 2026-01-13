@@ -60,7 +60,7 @@ class Bot(commands.Bot):
                 await self.load_extension(ext)
                 logger.debug(f'- "{ext}" (success)')
             except Exception as e:
-                logger.warn(f'- "{ext}" (failure: {e})')
+                logger.warning(f'- "{ext}" (failure: {e})')
 
         logger.info("Syncing commands...")
         synced: list[AppCommand] = await self.tree.sync()
@@ -69,7 +69,7 @@ class Bot(commands.Bot):
         if self.user:
             logger.info(f'User "{self.user.name}" with ID "{self.user.id}" is ready.')
         else:
-            logger.warn("Bot user is None on ready event!")
+            logger.warning("Bot user is None on ready event!")
 
     async def on_message(self, message: Message) -> None:
         """
@@ -90,12 +90,12 @@ class Bot(commands.Bot):
         for cog_name, func_name in COGS_TO_TRACK:
             cog = self.get_cog(cog_name)
             if not cog:
-                logger.warn(f'Cog "{cog_name}" not found')
+                logger.warning(f'Cog "{cog_name}" not found')
                 continue
 
             func = getattr(cog, func_name, None)
             if not func:
-                logger.warn(f'Cog "{cog_name}" has no function "{func_name}"')
+                logger.warning(f'Cog "{cog_name}" has no function "{func_name}"')
                 continue
 
             await func(message)

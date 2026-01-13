@@ -117,6 +117,161 @@ class ImpersonationCommandHandler(commands.Cog):
             # Track the impersonated message
             await impersonation_history.add(interaction.user.id, message_sent.id)
 
+    async def _autocomplete_scene_location(
+        self,
+        interaction: Interaction,
+        current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for scene location type."""
+        options: dict[str, str] = {
+            "INT.": "Interior",
+            "EXT.": "Exterior",
+            "INT./EXT.": "Interior/Exterior"
+        }
+
+        return [
+            app_commands.Choice(name=f"{description} ({option})", value=option)
+            for option, description in options.items()
+            if current.lower() in option.lower() or current.lower() in description.lower()
+        ][:25]
+
+    async def _autocomplete_scene_time_of_day(
+        self,
+        interaction: Interaction,
+        current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for scene time of day."""
+        options: dict[str, str] = {
+            "DAY": "Daytime",
+            "NIGHT": "Nighttime",
+            "DAWN": "Dawn",
+            "DUSK": "Dusk",
+            "MORNING": "Morning",
+            "AFTERNOON": "Afternoon",
+            "EVENING": "Evening"
+        }
+
+        return [
+            app_commands.Choice(name=f"{description} ({option})", value=option)
+            for option, description in options.items()
+            if current.lower() in option.lower() or current.lower() in description.lower()
+        ][:25]
+
+    async def _autocomplete_scene_color(
+        self,
+        interaction: Interaction,
+        current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for scene embed color."""
+
+        options: dict[str, discord.Color] = {
+            "Blue": discord.Color.blue(),
+            "Red": discord.Color.red(),
+            "Green": discord.Color.green(),
+            "Purple": discord.Color.purple(),
+            "Orange": discord.Color.orange(),
+            "Yellow": discord.Color.yellow(),
+            "Teal": discord.Color.teal(),
+            "Gold": discord.Color.gold(),
+            "Dark Blue": discord.Color.dark_blue(),
+            "Dark Red": discord.Color.dark_red(),
+        }
+
+        return [
+            app_commands.Choice(name=name, value=hex(color.value))
+            for name, color in options.items()
+            if current.lower() in name.lower()
+        ][:25]
+
+    @app_commands.command(
+        name="rp_scene",
+        description="Outputs a scene-setting message"
+    )
+    @app_commands.describe(
+        setting="The location of the scene",
+        location="Type of location (e.g., INT., EXT., INT./EXT.)",
+        time_of_day="Time of day for the scene",
+        parenthetical="Additional parenthetical information for the scene",
+        color="Color for the embed"
+    )
+    @app_commands.autocomplete(
+        location=_autocomplete_scene_location,
+        time_of_day=_autocomplete_scene_time_of_day,
+        color=_autocomplete_scene_color
+    )
+    async def rp_scene(
+        self,
+        interaction: Any,
+        setting: str,
+        time_of_day: str | None = None,
+        location: str | None = None,
+        parenthetical: str | None = None,
+        color: str | None = None,
+    ) -> None:
+        """Outputs a scene-setting message.
+
+        Args:
+            interaction (Interaction): The interaction that triggered the command.
+            setting (str): The name of the location for the scene.
+            location (str | None): The type of location (e.g., INT., EXT., INT./EXT.).
+            time_of_day (str | None): The time of day for the scene.
+            parenthetical (str | None): Additional parenthetical information for the scene.
+            color (str | None): The color for the embed.
+        """
+        # Defer to handle ephemeral error messages
+        await interaction.response.defer(ephemeral=True)
+
+        if not is_rp_enabled(interaction.channel):
+            msg = f"RP is not enabled in this channel ({get_channel_id(interaction.channel)}). Invoked by {interaction.user}."
+            await interaction.followup.send(msg, ephemeral=True)
+            logger.warning(msg)
+            return
+
+        channel = interaction.channel
+
+        if not isinstance(channel, discord.TextChannel):
+            msg = f"RP scene messages can only be sent in text channels. Invoked by {interaction.user}."
+            await interaction.followup.send(msg, ephemeral=True)
+            logger.warning(msg)
+            return
+
+        scene_text: str = setting
+
+        if location:
+            scene_text = f"{location} {scene_text}"
+
+        if time_of_day:
+            scene_text = f"{scene_text} - {time_of_day}"
+
+        if parenthetical:
+            scene_text = f"{scene_text} ({parenthetical})"
+
+        try:
+            response: discord.Message = await channel.send(
+                **build_discord_embed(
+                    description=(
+                        f"```\n"
+                        f"{scene_text.upper()}\n"
+                        f"```"
+                    ),
+                    timestamp=None,
+                    color=discord.Color(int(color, 16)) if color else discord.Color.blue(),
+                )
+            )
+
+            await interaction.delete_original_response()
+
+            if response:
+                await impersonation_history.add(interaction.user.id, response.id)
+
+            logger.debug(f"Sent rp_scene message from {interaction.user} in {channel.id}: \"{scene_text}\"")
+
+        except Exception as e:
+            if not interaction.response.is_done():
+                await interaction.delete_original_response()
+
+            logger.warning(f"Failed to send rp_scene message: {e}")
+
     @app_commands.command(
         name="rp_default",
         description="Set or unset a default profile for your RP messages"
@@ -198,7 +353,7 @@ class ImpersonationCommandHandler(commands.Cog):
             msg = f"RP is not enabled in this channel ({get_channel_id(interaction.channel)})."
             if send_callback:
                 await send_callback(msg)
-            logger.warn(msg)
+            logger.warning(msg)
             return False
 
         profile_listings = [

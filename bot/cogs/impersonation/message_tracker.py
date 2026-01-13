@@ -1,3 +1,5 @@
+import re
+
 import discord
 from discord import Message
 from discord.ext import commands
@@ -7,7 +9,7 @@ from bot.core.bot import impersonation_history
 from bot.core.bot import Bot
 from bot.utils.settings import settings
 from bot.utils.logger import logger
-from bot.utils.helpers import is_rp_enabled, send_as_profile, get_channel_id
+from bot.utils.helpers import is_rp_enabled, send_as_profile, get_channel_id, build_discord_embed
 
 
 # ----------------------------------------------------------------------
@@ -43,13 +45,47 @@ class ImpersonationMessageTracker(commands.Cog):
         if not is_rp_enabled(message.channel):
             return
 
+        match = re.fullmatch(r'scene\s*:(.+)', message.content.strip(), re.IGNORECASE)
+        scene = match.group(1).strip() if match else None
+
+        if scene:
+            try:
+                logger.debug(f"Sending rp_scene message from {message.author} in {message.channel.id}: \"{scene}\"")
+
+                response: discord.Message = await message.channel.send(
+                    **build_discord_embed(
+                        description=(
+                            f"```\n"
+                            f"{scene.upper()}\n"
+                            f"```"
+                        ),
+                        timestamp=None,
+                        color=discord.Color.blue(),
+                    )
+                )
+
+                if response:
+                    await impersonation_history.add(message.author.id, response.id)
+
+                await message.delete()
+
+            except Exception as e:
+                logger.warning(f"Failed to send rp_scene message: {e}")
+
+                await message.channel.send(
+                    "Failed to send scene message.",
+                    delete_after=10
+                )
+
+            return
+
         # Define inline callbacks
         async def send_callback(msg: str):
             """Send an ephemeral-style error message in the same channel."""
             try:
                 await message.channel.send(f"⚠️ {msg}", delete_after=10)
             except Exception as e:
-                logger.warn(f"Failed to send ephemeral error message: {e}")
+                logger.warning(f"Failed to send ephemeral error message: {e}")
 
         async def rm_thinking():
             """Remove the original 'thinking...' message if present."""
@@ -63,10 +99,10 @@ class ImpersonationMessageTracker(commands.Cog):
             try:
                 await message.delete()
                 logger.debug(
-                    f"Deleted empty message from {message.author} in {message.channel.id}."
+                    f"Deleted empty message from {message.author} in {message.channel.id}: no content or attachments."
                 )
             except Exception as e:
-                logger.warn(f"Failed to delete message: {e}")
+                logger.warning(f"Failed to delete message: {e}")
             return
 
         # Expect format: `trigger: message content` (exclude messages with only links)
@@ -87,7 +123,7 @@ class ImpersonationMessageTracker(commands.Cog):
                         "for missing trigger."
                     )
                 except Exception as e:
-                    logger.warn(f"Failed to delete message: {e}")
+                    logger.warning(f"Failed to delete message: {e}")
                 return
 
         parts = content.split(":", 1)
@@ -95,9 +131,9 @@ class ImpersonationMessageTracker(commands.Cog):
             # Handle missing trigger or invalid format
             try:
                 await message.delete()
-                logger.debug(f"Deleted message from {message.author} in {message.channel.id} for invalid format.")
+                logger.debug(f"Deleted message from {message.author} in {message.channel.id} for invalid format: \"{content}\"")
             except Exception as e:
-                logger.warn(f"Failed to delete message: {e}")
+                logger.warning(f"Failed to delete message: {e}")
             return
 
         trigger_part, content_part = map(str.strip, parts)
@@ -120,9 +156,6 @@ class ImpersonationMessageTracker(commands.Cog):
             stickers=message.stickers if message.stickers else None,
         )
 
-        print(message_sent)
-        print(message_sent.id if message_sent else "No message sent")
-
         if message_sent:
             # Track the impersonated message
             await impersonation_history.add(message.author.id, message_sent.id)
@@ -141,4 +174,4 @@ class ImpersonationMessageTracker(commands.Cog):
                     f"in channel {get_channel_id(message.channel)} with trigger '{trigger_part}': \"{content_part}\""
                 )
         except Exception as e:
-            logger.warn(f"Failed to delete message: {e}")
+            logger.warning(f"Failed to delete message: {e}")

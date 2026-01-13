@@ -30,11 +30,11 @@ class ConsoleLogger:
             self._log("DEBUG", message, level_color="\033[93m")
 
     def warn(self, message: str):
-        self._log("WARN", message, level_color="\033[91m")
+        self.warn('!!!!!!!!!!!!!!!! UPDATE CODE CALL FROM WARNING TO WARN!')
+        self.warning(message)
 
     def warning(self, message: str):
-        self.warn('UPDATE CODE CALL FROM WARNING TO WARN!')
-        self.warn(message)
+        self._log("WARN", message, level_color="\033[91m")
 
     # log complete settings dump loaded from environment
     def log_settings(self, settings: BaseSettings):

@@ -67,7 +67,7 @@ async def send_as_profile(
     """
 
     if not is_rp_enabled(channel):
-        msg = f"RP is not enabled in this channel ({get_channel_id(channel)})."
+        msg = f"RP is not enabled in this channel ({get_channel_id(channel)}). Invoked by {user}."
         if send_callback:
             await send_callback(msg)
         return None
@@ -91,7 +91,7 @@ async def send_as_profile(
 
     if not isinstance(channel, discord.abc.Messageable):
         if send_callback:
-            await send_callback("Cannot send message in this channel.")
+            await send_callback(f"Cannot send message in this channel. Invoked by {user}.")
         return None
 
     try:
@@ -123,7 +123,7 @@ async def send_as_profile(
                 )
                 files_to_send.append(sticker_file)
             except Exception as e:
-                logger.warn(f"Failed to fetch sticker {sticker.name}: {e}")
+                logger.warning(f"Failed to fetch sticker {sticker.name}: {e}")
 
         message: discord.Message = await webhook.send(
             formatted_content,
@@ -178,7 +178,7 @@ async def fetch_sticker_as_file_safe(sticker, guild=None):
             gif_bytes = exporters.to_bytes(animation, format="gif")
             return File(io.BytesIO(gif_bytes), filename=f"{sticker.name}.gif")
         else:
-            logger.warn(f"Sticker {sticker.name} has no URL to fetch Lottie data.")
+            logger.warning(f"Sticker {sticker.name} has no URL to fetch Lottie data.")
             return None
 
 EMOJI_PATTERN = re.compile(
@@ -305,8 +305,10 @@ def get_channel_id(channel: AllowedChannelMixed) -> int:
     """
     if isinstance(channel, str):
         return int(channel)
+
     if isinstance(channel, int):
         return channel
+
     return channel.id
 
 
@@ -466,13 +468,14 @@ def build_discord_embed(
     title: str = "",
     description: str = "",
     color: discord.Color = discord.Color.blue(),
+    timestamp: discord.datetime | None = discord.utils.utcnow(),
 ) -> EmbedDict:
     """Build a simple embed with no extra media."""
     embed = discord.Embed(
         title=title,
         description=description,
         color=color,
-        timestamp=discord.utils.utcnow(),
+        timestamp=timestamp,
     )
     return build_discord_send_dict_from_embed_like_and_content(embed)
 
