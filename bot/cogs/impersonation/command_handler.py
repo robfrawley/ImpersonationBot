@@ -1,4 +1,3 @@
-import asyncio
 import discord
 from discord import Interaction
 from discord import app_commands
@@ -6,8 +5,8 @@ from discord.ext import commands
 
 from typing import Any
 
-from bot.core.bot import impersonation_default
-from bot.core.bot import impersonation_history
+from bot.db.impersonation_default import impersonation_default
+from bot.db.impersonation_history import impersonation_history
 from bot.utils.logger import logger
 from bot.utils.settings import settings, ImpersonationProfile
 from bot.utils.helpers import (
@@ -15,7 +14,6 @@ from bot.utils.helpers import (
     get_channel_id,
     build_discord_embed,
     build_discord_embed_with_thumbnail,
-    get_or_create_webhook,
     send_as_profile,
     get_profile_by_trigger_and_user,
 )
@@ -34,7 +32,7 @@ class ImpersonationCommandHandler(commands.Cog):
         """
         self.bot = bot
 
-    async def trigger_autocomplete(self, interaction: Interaction, current: str):
+    async def _autocomplete_trigger(self, interaction: Interaction, current: str):
         """Autocomplete first triggers, showing user's current default at the top."""
         choices = []
 
@@ -73,7 +71,7 @@ class ImpersonationCommandHandler(commands.Cog):
         trigger="Trigger of the impersonation profile",
         message="Message to send"
     )
-    @app_commands.autocomplete(trigger=trigger_autocomplete)
+    @app_commands.autocomplete(trigger=_autocomplete_trigger)
     async def rp(
         self,
         interaction: Any,
@@ -264,13 +262,13 @@ class ImpersonationCommandHandler(commands.Cog):
             if response:
                 await impersonation_history.add(interaction.user.id, response.id)
 
-            logger.debug(f"Sent rp_scene message from {interaction.user} in {channel.id}: \"{scene_text}\"")
+            logger.debug(f'Sent rp_scene message from "{interaction.user}" in "{channel.id}": "{scene_text.replace("\n", "\\n")}"')
 
         except Exception as e:
             if not interaction.response.is_done():
                 await interaction.delete_original_response()
 
-            logger.warning(f"Failed to send rp_scene message: {e}")
+            logger.warning(f'Failed to send rp_scene message: {e}')
 
     @app_commands.command(
         name="rp_default",
@@ -279,10 +277,11 @@ class ImpersonationCommandHandler(commands.Cog):
     @app_commands.describe(
         trigger="The trigger of the impersonation profile to set as default. Leave empty to unset."
     )
-    @app_commands.autocomplete(trigger=trigger_autocomplete)
+    @app_commands.autocomplete(trigger=_autocomplete_trigger)
     async def rp_default(self, interaction: Interaction, trigger: str | None = None):
         """Set or unset a default profile for your RP messages."""
         await interaction.response.defer(ephemeral=True)
+
         user_id = interaction.user.id
 
         if not trigger or trigger.strip() == "":
@@ -295,6 +294,7 @@ class ImpersonationCommandHandler(commands.Cog):
                 ),
                 ephemeral=True
             )
+            logger.debug(f'User {interaction.user} unset their default RP profile.')
         else:
             # Set default
             await impersonation_default.set(user_id, trigger.strip())
@@ -306,11 +306,12 @@ class ImpersonationCommandHandler(commands.Cog):
                         title="⚠️ Default RP Profile Warning",
                         description=(
                             f"The trigger `{trigger.strip()}` does not match any available profile. "
-                            f"You may not be able to use it until a matching profile is added.",
+                            f"You may not be able to use it until a matching profile is added."
                         )
                     ),
                     ephemeral=True
                 )
+                logger.warning(f'User {interaction.user} set their default RP profile to unknown trigger "{trigger.strip()}".')
             else:
                 power_url = profile.power_url if profile.power_url else "No power image set."
                 await interaction.followup.send(
@@ -326,6 +327,7 @@ class ImpersonationCommandHandler(commands.Cog):
                     ),
                     ephemeral=True,
                 )
+                logger.debug(f'User {interaction.user} set their default RP profile to "{profile.username}" with trigger "{trigger.strip()}".')
 
     @app_commands.command(
         name="rp_help",

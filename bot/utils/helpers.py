@@ -1,21 +1,14 @@
-from typing import Callable, Optional, Union
+import io
+import re
+from typing import Callable, Iterable
 
 import aiohttp
-import json
-import re
-import io
 import discord
-from discord.abc import Messageable
-from discord import Message, File, StickerItem
-
-from typing import Iterable, Optional
-
-from lottie import objects, importers, exporters
-from PIL import Image
+from discord import File
 
 from bot.core.bot import Bot
 from bot.utils.logger import logger
-from bot.utils.settings import settings, ImpersonationProfile
+from bot.utils.settings import ImpersonationProfile, settings
 from bot.utils.types import (
     AllowedChannelMixed,
     EmbedAndContentDict,
@@ -35,7 +28,7 @@ def get_profile_by_trigger_and_user(
 
     Args:
         profile_trigger: Trigger string to find the impersonation profile.
-        user: The Discord user performing the action (for is_allowed_user checks).  
+        user: The Discord user performing the action (for is_allowed_user checks).
     Returns:
         The matching ImpersonationProfile, or None if not found.
     """
@@ -123,7 +116,7 @@ async def send_as_profile(
                 )
                 files_to_send.append(sticker_file)
             except Exception as e:
-                logger.warning(f"Failed to fetch sticker {sticker.name}: {e}")
+                logger.warning(f'Failed to fetch sticker {sticker.name}: {e}')
 
         message: discord.Message = await webhook.send(
             formatted_content,
@@ -178,7 +171,7 @@ async def fetch_sticker_as_file_safe(sticker, guild=None):
             gif_bytes = exporters.to_bytes(animation, format="gif")
             return File(io.BytesIO(gif_bytes), filename=f"{sticker.name}.gif")
         else:
-            logger.warning(f"Sticker {sticker.name} has no URL to fetch Lottie data.")
+            logger.warning(f'Sticker {sticker.name} has no URL to fetch Lottie data.')
             return None
 
 EMOJI_PATTERN = re.compile(
@@ -189,8 +182,8 @@ async def convert_emojis_and_attachments_for_webhook(
     *,
     bot: discord.Client,
     text: str,
-    attachments: Optional[Iterable[discord.File]] = None,
-    external_emoji_map: Optional[dict[str, str]] = None,
+    attachments: Iterable[discord.File] | None = None,
+    external_emoji_map: dict[str, str] | None = None,
 ) -> tuple[str, list[discord.File]]:
     """
     Converts :emoji_name: into:

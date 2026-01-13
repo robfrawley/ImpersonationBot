@@ -5,9 +5,9 @@ from discord.app_commands import AppCommand
 
 from bot.utils.logger import logger
 from bot.utils.settings import settings
-from bot.db.database import Database
-from bot.db.impersonation_default import ImpersonationDefaultRepo
-from bot.db.impersonation_history import ImpersonationHistoryRepo
+from bot.db.database import Database, db
+from bot.db.impersonation_default import ImpersonationDefaultRepo, impersonation_default
+from bot.db.impersonation_history import ImpersonationHistoryRepo, impersonation_history
 
 # List of bot extensions (cogs) to load
 EXTENSIONS: list[str] = [
@@ -18,9 +18,9 @@ EXTENSIONS: list[str] = [
 # Globals
 # ----------------------------------------------------------------------
 
-db = Database(settings.sqlite_db_path)
-impersonation_default: ImpersonationDefaultRepo | None = None
-impersonation_history: ImpersonationHistoryRepo | None = None
+#db = Database(settings.sqlite_db_path)
+#impersonation_default: ImpersonationDefaultRepo | None = None
+#impersonation_history: ImpersonationHistoryRepo | None = None
 
 
 class Bot(commands.Bot):
@@ -39,21 +39,18 @@ class Bot(commands.Bot):
 
     async def on_ready(self) -> None:
         """Called when the bot has connected and is ready."""
-        global impersonation_default
-        global impersonation_history
+
+        logger.info(f'Logged in as "{self.user}" (ID: "{self.user.id if self.user else "N/A"}")')
+        logger.debug('Connecting to database...')
 
         await db.connect()
 
-        impersonation_default = ImpersonationDefaultRepo(db)
-        impersonation_history = ImpersonationHistoryRepo(db)
+        logger.debug('Initializing database schemas...')
 
         await impersonation_default.init_schema()
         await impersonation_history.init_schema()
 
-        logger.debug("Database connected and ImpersonationDefaultRepo initialized.")
-        logger.info(f"Bot is ready. Logged in as {self.user} (ID: {self.user.id})")
-
-        logger.info("Loading extensions...")
+        logger.info('Loading extensions...')
 
         for ext in EXTENSIONS:
             try:
@@ -62,14 +59,13 @@ class Bot(commands.Bot):
             except Exception as e:
                 logger.warning(f'- "{ext}" (failure: {e})')
 
-        logger.info("Syncing commands...")
-        synced: list[AppCommand] = await self.tree.sync()
-        logger.log_commands(synced)
+        logger.info('Syncing commands...')
+        logger.log_commands(await self.tree.sync())
 
         if self.user:
             logger.info(f'User "{self.user.name}" with ID "{self.user.id}" is ready.')
         else:
-            logger.warning("Bot user is None on ready event!")
+            logger.warning('Bot user is None on ready event!')
 
     async def on_message(self, message: Message) -> None:
         """

@@ -1,12 +1,9 @@
-import os
 import json
-import sys
-import discord
-from discord.app_commands import AppCommand
 from zoneinfo import ZoneInfo
-from dotenv import load_dotenv
+
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from bot import ENV_FILE_PATH
 
 
@@ -43,7 +40,7 @@ class SettingsManager(BaseSettings):
     discord_token: str = Field()
     sqlite_db_path: str = Field()
     debug_mode: bool = Field(default=False)
-    bot_timezone: ZoneInfo = Field(default=ZoneInfo("UTC"))
+    bot_time_zone: ZoneInfo = Field(default=ZoneInfo("UTC"))
     enabled_channels: list[int] = Field(default=[])
 
     model_config = SettingsConfigDict(
@@ -54,10 +51,10 @@ class SettingsManager(BaseSettings):
         env_nested_delimiter="__",
     )
 
-    @field_validator("bot_timezone", mode="before")
+    @field_validator("bot_time_zone", mode="before")
     @classmethod
-    def normalize_bot_timezone(cls, v):
-        """Convert string timezone to ZoneInfo if needed."""
+    def normalize_bot_time_zone(cls, v):
+        """Convert string time zone to ZoneInfo if needed."""
         if isinstance(v, str):
             return ZoneInfo(v)
         return v
@@ -106,4 +103,4 @@ class SettingsManager(BaseSettings):
 
 
 # Instantiate settings
-settings = SettingsManager()
+settings = SettingsManager() # type: ignore

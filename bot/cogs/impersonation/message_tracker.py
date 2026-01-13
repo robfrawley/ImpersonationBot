@@ -4,12 +4,16 @@ import discord
 from discord import Message
 from discord.ext import commands
 
-from bot.core.bot import impersonation_default
-from bot.core.bot import impersonation_history
+from bot.db.impersonation_default import impersonation_default
+from bot.db.impersonation_history import impersonation_history
 from bot.core.bot import Bot
-from bot.utils.settings import settings
 from bot.utils.logger import logger
-from bot.utils.helpers import is_rp_enabled, send_as_profile, get_channel_id, build_discord_embed
+from bot.utils.helpers import (
+    is_rp_enabled,
+    send_as_profile,
+    get_channel_id,
+    build_discord_embed,
+)
 
 
 # ----------------------------------------------------------------------
@@ -70,7 +74,7 @@ class ImpersonationMessageTracker(commands.Cog):
                 await message.delete()
 
             except Exception as e:
-                logger.warning(f"Failed to send rp_scene message: {e}")
+                logger.warning(f'Failed to send rp_scene message: {e}')
 
                 await message.channel.send(
                     "Failed to send scene message.",
@@ -85,7 +89,7 @@ class ImpersonationMessageTracker(commands.Cog):
             try:
                 await message.channel.send(f"⚠️ {msg}", delete_after=10)
             except Exception as e:
-                logger.warning(f"Failed to send ephemeral error message: {e}")
+                logger.warning(f'Failed to send ephemeral error message: {e}')
 
         async def rm_thinking():
             """Remove the original 'thinking...' message if present."""
@@ -102,7 +106,7 @@ class ImpersonationMessageTracker(commands.Cog):
                     f"Deleted empty message from {message.author} in {message.channel.id}: no content or attachments."
                 )
             except Exception as e:
-                logger.warning(f"Failed to delete message: {e}")
+                logger.warning(f'Failed to delete message: {e}')
             return
 
         # Expect format: `trigger: message content` (exclude messages with only links)
@@ -123,7 +127,7 @@ class ImpersonationMessageTracker(commands.Cog):
                         "for missing trigger."
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to delete message: {e}")
+                    logger.warning(f'Failed to delete message: {e}')
                 return
 
         parts = content.split(":", 1)
@@ -133,7 +137,7 @@ class ImpersonationMessageTracker(commands.Cog):
                 await message.delete()
                 logger.debug(f"Deleted message from {message.author} in {message.channel.id} for invalid format: \"{content}\"")
             except Exception as e:
-                logger.warning(f"Failed to delete message: {e}")
+                logger.warning(f'Failed to delete message: {e}')
             return
 
         trigger_part, content_part = map(str.strip, parts)
@@ -174,4 +178,4 @@ class ImpersonationMessageTracker(commands.Cog):
                     f"in channel {get_channel_id(message.channel)} with trigger '{trigger_part}': \"{content_part}\""
                 )
         except Exception as e:
-            logger.warning(f"Failed to delete message: {e}")
+            logger.warning(f'Failed to delete message: {e}')

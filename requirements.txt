@@ -1,19 +1,22 @@
-discord.py>=2.6.0
+
+# Files
+aiofiles
 aiohttp>=3.9
+
+# db
+aiosqlite
+discord.py>=2.6.0
+
+# images
+lottie
+Pillow
+
+# code management
+pre-commit
+pydantic-settings
 
 # Date and Time Handling
 python-dateutil
 
 # Settings Handling
 python-dotenv
-pydantic-settings
-
-# images
-lottie
-Pillow
-
-# Files
-aiofiles
-
-# db
-aiosqlite

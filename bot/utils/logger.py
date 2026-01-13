@@ -1,70 +1,73 @@
-import os
-import json
-import sys
 import datetime
-import discord
-from discord.app_commands import AppCommand
+import sys
 from zoneinfo import ZoneInfo
+
+from discord.app_commands import AppCommand
 from pydantic_settings import BaseSettings
-from bot.utils.settings import settings, ImpersonationProfile
 
-# console logger class handles writing logs to console with colors and timestamps
+from bot.utils.settings import ImpersonationProfile, settings
+
+
 class ConsoleLogger:
-    def __init__(self, debug_enabled: bool = True, timezone: ZoneInfo = ZoneInfo("UTC")):
+    """Write timestamped, colorized logs to stdout."""
+
+    def __init__(self, debug_enabled: bool = True, time_zone: ZoneInfo | None = None, date_format: str | None = None) -> None:
         self.debug_enabled = debug_enabled
-        self.timezone = timezone
+        self.time_zone = time_zone or ZoneInfo("UTC")
+        self.date_format = date_format or "%Y-%m-%d %H:%M:%S"
 
-    def _log(self, level: str, message: str, level_color: str = ""):
-        timestamp = datetime.datetime.now(tz=self.timezone).strftime("%Y-%m-%d %H:%M:%S")
-        dim_white = "\033[37;2m"
+    def _log(self, level: str, message: str | None, level_color: str | None = None) -> None:
+        timestamp = datetime.datetime.now(tz=self.time_zone).strftime(self.date_format)
         reset_code = "\033[0m"
-        padded_level = f"{level.ljust(8)}"
-        colored_level = f"{level_color}{padded_level}{reset_code}"
-        print(f"{dim_white}{timestamp}{reset_code} {colored_level} {message}", file=sys.stdout)
+        level_code = f"\033[{level_color}m" if level_color else "\033[37m"
+        print(f"\033[37;2m{timestamp}{reset_code} {level_code}{level.ljust(8)}{reset_code} {message}", file=sys.stdout)
 
-    def info(self, message: str):
-        self._log("INFO", message, level_color="\033[34;1m")
+    def info(self, message: str | None) -> None:
+        self._log("INFO", message, level_color="34;1")
 
-    def debug(self, message: str):
+    def debug(self, message: str | None) -> None:
         if self.debug_enabled:
-            self._log("DEBUG", message, level_color="\033[93m")
+            self._log("DEBUG", message, level_color="93")
 
-    def warn(self, message: str):
-        self.warn('!!!!!!!!!!!!!!!! UPDATE CODE CALL FROM WARNING TO WARN!')
-        self.warning(message)
+    def warning(self, message: str | None) -> None:
+        self._log("WARN", message, level_color="91")
 
-    def warning(self, message: str):
-        self._log("WARN", message, level_color="\033[91m")
+    def error(self, message: str | None) -> None:
+        self._log("CRIT", message, level_color="91;1")
 
     # log complete settings dump loaded from environment
-    def log_settings(self, settings: BaseSettings):
+    def log_settings(self, settings: BaseSettings) -> None:
         self.info("Loaded configuration...")
 
-        fields = settings.model_fields.keys()
+        fields = settings.__class__.model_fields.keys()
         values = {field: getattr(settings, field) for field in fields}
-        maxlen = max(len(name) for name in fields)
+        max_len = max(len(name) for name in fields)
 
         for name, value in values.items():
             if name == "impersonation_profiles":
-                p_key_maxlen = max(len(field_name) for field_name in ImpersonationProfile.model_fields)
+                p_key_max_len = max(
+                    len(field_name) for field_name in ImpersonationProfile.model_fields
+                )
 
-                self.debug(f'- ' + f'"{name}"'.ljust(maxlen + 2) + f' = [')
+                label = f'"{name}"'.ljust(max_len + 2)
+                self.debug(f'- {label} = [')
 
                 for idx, profile in enumerate(value):
-                    self.debug(f"    \"profile-{idx + 1}\" = [")
+                    self.debug(f'    "profile-{idx + 1}" = [')
 
                     for p_name, p_value in profile.model_dump().items():
-                        self.debug(f'      ' + f'"{p_name}"'.ljust(p_key_maxlen + 2) + f' = "{p_value}"')
+                        p_label = f'"{p_name}"'.ljust(p_key_max_len + 2)
+                        self.debug(f'      {p_label} = "{p_value}"')
 
-                    self.debug(f"    ]")
+                    self.debug("    ]")
 
-                self.debug(f"  ]")
+                self.debug("  ]")
             else:
-                self.debug(f'- ' + f'"{name}"'.ljust(maxlen + 2) + f' = "{value}"')
+                label = f'"{name}"'.ljust(max_len + 2)
+                self.debug(f'- {label} = "{value}"')
 
     # log synced commands
-    def log_commands(self, synced: AppCommand):
-
+    def log_commands(self, synced: list[AppCommand]) -> None:
         entries: list[tuple[str, str]] = []
 
         for command in synced:
@@ -73,12 +76,12 @@ class ConsoleLogger:
 
         max_len = max((len(cmd) for cmd, _ in entries), default=0)
 
-        logger.info(f"Synced \"{len(synced)}\" commands...")
-        
+        logger.info(f'Synced "{len(synced)}" commands...')
+
         for cmd, scope in entries:
-            logger.debug(f"{cmd.ljust(max_len)} ({scope})")
+            logger.debug(f'{cmd.ljust(max_len)} ({scope})')
 
 
 # initialize logger and dump settings
-logger = ConsoleLogger(debug_enabled=settings.debug_mode, timezone=settings.bot_timezone)
+logger = ConsoleLogger(debug_enabled=settings.debug_mode, time_zone=settings.bot_time_zone)
 logger.log_settings(settings)

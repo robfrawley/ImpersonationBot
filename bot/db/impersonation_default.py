@@ -1,37 +1,34 @@
-from bot.db.database import Database
+from bot.db.database import Database, db
 
 class ImpersonationDefaultRepo:
     def __init__(self, db: Database):
-        if db.conn is None:
-            raise RuntimeError("Database is not connected")
         self.db = db
+        self.connection = db.conn
+
+        assert self.connection is not None, "Database is not connected"
 
     async def init_schema(self) -> None:
-        await self.db.conn.execute("""
+        await self.db.execute("""
             CREATE TABLE IF NOT EXISTS user_triggers (
                 user_id INTEGER PRIMARY KEY,
                 default_trigger TEXT CHECK (default_trigger IS NULL OR length(default_trigger) < 255)
             )
         """)
-        await self.db.conn.commit()
 
     async def get(self, user_id: int) -> str | None:
         """Return the user's default trigger, or None if not set."""
-        async with self.db.conn.execute(
+        row = await db.execute_fetchone(
             "SELECT default_trigger FROM user_triggers WHERE user_id = ?",
             (user_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row is None:
-                return None
-            return row[0]  # default_trigger or None
+        )
+        return row[0] if row else None
 
     async def set(self, user_id: int, trigger: str):
         """
         Set or update the user's default trigger.
         Creates a row if it doesn't exist.
         """
-        await self.db.conn.execute(
+        await self.db.execute(
             """
             INSERT INTO user_triggers (user_id, default_trigger)
             VALUES (?, ?)
@@ -39,7 +36,6 @@ class ImpersonationDefaultRepo:
             """,
             (user_id, trigger)
         )
-        await self.db.conn.commit()
 
     async def unset(self, user_id: int):
         """
@@ -47,13 +43,14 @@ class ImpersonationDefaultRepo:
         Creates a row if it doesn't exist to avoid errors.
         """
         # Ensure a row exists
-        await self.db.conn.execute(
+        await self.db.execute(
             "INSERT OR IGNORE INTO user_triggers (user_id) VALUES (?)",
             (user_id,)
         )
         # Set default_trigger to NULL
-        await self.db.conn.execute(
+        await self.db.execute(
             "UPDATE user_triggers SET default_trigger = NULL WHERE user_id = ?",
             (user_id,)
         )
-        await self.db.conn.commit()
+
+impersonation_default: ImpersonationDefaultRepo = ImpersonationDefaultRepo(db)
