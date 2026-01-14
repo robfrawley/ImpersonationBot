@@ -1,10 +1,10 @@
+from bot.core.bot import Bot
 from bot.cogs.impersonation.message_tracker import ImpersonationMessageTracker
 from bot.cogs.impersonation.command_handler import ImpersonationCommandHandler
 from bot.cogs.impersonation.reacted_tracker import ImpersonationReactedTracker
-from discord.ext import commands
 
 
-async def setup(bot: commands.Bot) -> None:
+async def setup(bot: Bot) -> None:
     """
     Async setup function to load the Impersonation cogs.
 

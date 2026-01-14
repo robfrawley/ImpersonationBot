@@ -1,58 +1,37 @@
 import discord
 from discord import Message
 from discord.ext import commands
-from discord.app_commands import AppCommand
 
-from bot.utils.logger import logger
 from bot.utils.settings import settings
-from bot.db.database import Database, db
-from bot.db.impersonation_default import ImpersonationDefaultRepo, impersonation_default
-from bot.db.impersonation_history import ImpersonationHistoryRepo, impersonation_history
+from bot.utils.logger import logger
+from bot.db.database import db
+from bot.db.impersonation_default import impersonation_default
+from bot.db.impersonation_history import impersonation_history
 
-# List of bot extensions (cogs) to load
-EXTENSIONS: list[str] = [
+
+# List of bot extensions to load
+BOT_LOAD_EXTENSIONS: list[str] = [
     "bot.cogs.impersonation",
 ]
 
-# ----------------------------------------------------------------------
-# Globals
-# ----------------------------------------------------------------------
-
-#db = Database(settings.sqlite_db_path)
-#impersonation_default: ImpersonationDefaultRepo | None = None
-#impersonation_history: ImpersonationHistoryRepo | None = None
+# List of callable to track messages
+BOT_MESSAGE_TRACKER: list[tuple[str, str]] = [
+    ("ImpersonationMessageTracker", "track_messages"),
+]
 
 
 class Bot(commands.Bot):
-    """Custom Discord bot with automatic cog loading and command syncing."""
 
-    def __init__(self, command_prefix: str, intents: discord.Intents, **kwargs) -> None:
-        """
-        Initialize the bot.
+    async def setup_hook(self) -> None:
+        logger.debug('Running setup hook...')
 
-        Args:
-            command_prefix: Prefix for text commands.
-            intents: Discord bot intents.
-            **kwargs: Additional arguments to pass to commands.Bot.
-        """
-        super().__init__(command_prefix, intents=intents, **kwargs)
-
-    async def on_ready(self) -> None:
-        """Called when the bot has connected and is ready."""
-
-        logger.info(f'Logged in as "{self.user}" (ID: "{self.user.id if self.user else "N/A"}")')
-        logger.debug('Connecting to database...')
-
+        logger.info('Setting up database...')
         await db.connect()
-
-        logger.debug('Initializing database schemas...')
-
         await impersonation_default.init_schema()
         await impersonation_history.init_schema()
 
         logger.info('Loading extensions...')
-
-        for ext in EXTENSIONS:
+        for ext in BOT_LOAD_EXTENSIONS:
             try:
                 await self.load_extension(ext)
                 logger.debug(f'- "{ext}" (success)')
@@ -62,39 +41,40 @@ class Bot(commands.Bot):
         logger.info('Syncing commands...')
         logger.log_commands(await self.tree.sync())
 
-        if self.user:
-            logger.info(f'User "{self.user.name}" with ID "{self.user.id}" is ready.')
-        else:
-            logger.warning('Bot user is None on ready event!')
+    async def on_ready(self) -> None:
+        logger.debug('Running on-ready hook...')
+
+        if not self.user:
+            raise Exception("Bot user information is None.")
+
+        logger.info(f'User "{self.user.name}" with ID "{self.user.id}" is logged in and ready.')
+
+    async def close(self) -> None:
+        logger.debug('Closing Discord connection...')
+        await super().close()
+
+        try:
+            logger.debug('Closing database connection...')
+            await db.close()
+        except Exception as e:
+            logger.warning(f'Error closing database connection: {e}')
 
     async def on_message(self, message: Message) -> None:
-        """
-        Called when a message is received.
-
-        Args:
-            message: The Discord message object.
-        """
-        # Ignore messages from bots
         if message.author.bot:
             return
 
-        # List of cogs and functions to process messages
-        COGS_TO_TRACK: list[tuple[str, str]] = [
-            ("ImpersonationMessageTracker", "track_messages"),
-        ]
+        for class_name, method_name in BOT_MESSAGE_TRACKER:
 
-        for cog_name, func_name in COGS_TO_TRACK:
-            cog = self.get_cog(cog_name)
-            if not cog:
-                logger.warning(f'Cog "{cog_name}" not found')
+            cog_instance = self.get_cog(class_name)
+            if not cog_instance:
+                logger.warning(f'Message tracker class "{class_name}" not found.')
                 continue
 
-            func = getattr(cog, func_name, None)
-            if not func:
-                logger.warning(f'Cog "{cog_name}" has no function "{func_name}"')
+            method_callable = getattr(cog_instance, method_name, None)
+            if not method_callable:
+                logger.warning(f'Message tracker class "{class_name}" has no method "{method_name}".')
                 continue
 
-            await func(message)
+            await method_callable(message)
 
-        # Ensure commands are processed
         await self.process_commands(message)

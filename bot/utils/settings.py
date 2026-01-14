@@ -1,5 +1,6 @@
 import json
 from zoneinfo import ZoneInfo
+from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -50,6 +51,15 @@ class SettingsManager(BaseSettings):
         populate_by_name=True,
         env_nested_delimiter="__",
     )
+
+    @field_validator("sqlite_db_path", mode="before")
+    @classmethod
+    def make_sqlite_db_path_absolute(cls, v: str) -> str:
+        """Ensure sqlite_db_path is an absolute path."""
+        if not v:
+            raise ValueError("sqlite_db_path cannot be empty")
+
+        return str(Path(v).expanduser().resolve())
 
     @field_validator("bot_time_zone", mode="before")
     @classmethod

@@ -76,7 +76,7 @@ class ConsoleLogger:
 
         max_len = max((len(cmd) for cmd, _ in entries), default=0)
 
-        logger.info(f'Synced "{len(synced)}" commands...')
+        logger.debug(f'Synced "{len(synced)}" commands...')
 
         for cmd, scope in entries:
             logger.debug(f'{cmd.ljust(max_len)} ({scope})')

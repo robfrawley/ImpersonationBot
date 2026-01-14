@@ -3,8 +3,10 @@ from discord import Interaction
 from discord import app_commands
 from discord.ext import commands
 
+from collections.abc import Callable
 from typing import Any
 
+from bot.core.bot import Bot
 from bot.db.impersonation_default import impersonation_default
 from bot.db.impersonation_history import impersonation_history
 from bot.utils.logger import logger
@@ -14,6 +16,7 @@ from bot.utils.helpers import (
     get_channel_id,
     build_discord_embed,
     build_discord_embed_with_thumbnail,
+    build_discord_embed_with_thumbnail_and_image,
     send_as_profile,
     get_profile_by_trigger_and_user,
 )
@@ -23,12 +26,12 @@ from bot.utils.types import AllowedChannel
 class ImpersonationCommandHandler(commands.Cog):
     """Cog containing RP (roleplay) system commands."""
 
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: Bot):
         """
         Initialize the cog.
 
         Args:
-            bot (commands.Bot): The bot instance.
+            bot (Bot): The bot instance.
         """
         self.bot = bot
 
@@ -88,7 +91,7 @@ class ImpersonationCommandHandler(commands.Cog):
         # Defer to handle ephemeral error messages
         await interaction.response.defer(ephemeral=True)
 
-        async def send_callback(msg: str):
+        async def send_callback(msg: str) -> None:
             """Send an ephemeral error message to the user."""
             await interaction.followup.send(msg, ephemeral=True)
 
@@ -163,16 +166,31 @@ class ImpersonationCommandHandler(commands.Cog):
         """Autocomplete for scene embed color."""
 
         options: dict[str, discord.Color] = {
-            "Blue": discord.Color.blue(),
-            "Red": discord.Color.red(),
-            "Green": discord.Color.green(),
-            "Purple": discord.Color.purple(),
-            "Orange": discord.Color.orange(),
-            "Yellow": discord.Color.yellow(),
-            "Teal": discord.Color.teal(),
-            "Gold": discord.Color.gold(),
-            "Dark Blue": discord.Color.dark_blue(),
-            "Dark Red": discord.Color.dark_red(),
+            "Teal (#1ABC9C)": discord.Color.teal(),
+            "Dark Teal (#11806A)": discord.Color.dark_teal(),
+            "Green (#2ECC71)": discord.Color.green(),
+            "Dark Green (#1F8B4C)": discord.Color.dark_green(),
+            "Blue (#3498DB)": discord.Color.blue(),
+            "Dark Blue (#206694)": discord.Color.dark_blue(),
+            "Purple (#9B59B6)": discord.Color.purple(),
+            "Dark Purple (#71368A)": discord.Color.dark_purple(),
+            "Magenta (#E91E63)": discord.Color.magenta(),
+            "Dark Magenta (#AD1457)": discord.Color.dark_magenta(),
+            "Gold (#F1C40F)": discord.Color.gold(),
+            "Dark Gold (#C27C0E)": discord.Color.dark_gold(),
+            "Orange (#E67E22)": discord.Color.orange(),
+            "Dark Orange (#A84300)": discord.Color.dark_orange(),
+            "Red (#E74C3C)": discord.Color.red(),
+            "Dark Red (#992D22)": discord.Color.dark_red(),
+            "Fuchsia (#EB459E)": discord.Color.fuchsia(),
+            "Yellow (#FEE75C)": discord.Color.yellow(),
+            "Pink (#EB459F)": discord.Color.pink(),
+            "White (#FFFFFF)": discord.Color.light_embed(),
+            "Lightest Grey (#95A5A6)": discord.Color.lighter_grey(),
+            "Light Grey (#979C9F)": discord.Color.light_grey(),
+            "Dark Grey (#607d8b)": discord.Color.dark_grey(),
+            "Darkest Grey (#546E7A)": discord.Color.darker_grey(),
+            "Random": discord.Color.random(),
         }
 
         return [
@@ -211,8 +229,8 @@ class ImpersonationCommandHandler(commands.Cog):
         Args:
             interaction (Interaction): The interaction that triggered the command.
             setting (str): The name of the location for the scene.
-            location (str | None): The type of location (e.g., INT., EXT., INT./EXT.).
             time_of_day (str | None): The time of day for the scene.
+            location (str | None): The type of location (e.g., INT., EXT., INT./EXT.).
             parenthetical (str | None): Additional parenthetical information for the scene.
             color (str | None): The color for the embed.
         """
@@ -283,9 +301,9 @@ class ImpersonationCommandHandler(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         user_id = interaction.user.id
+        trigger = trigger.strip() if trigger else None
 
-        if not trigger or trigger.strip() == "":
-            # Unset default
+        if not trigger:
             await impersonation_default.unset(user_id)
             await interaction.followup.send(
                 **build_discord_embed(
@@ -295,39 +313,32 @@ class ImpersonationCommandHandler(commands.Cog):
                 ephemeral=True
             )
             logger.debug(f'User {interaction.user} unset their default RP profile.')
-        else:
-            # Set default
-            await impersonation_default.set(user_id, trigger.strip())
-            profile: ImpersonationProfile | None = get_profile_by_trigger_and_user(trigger.strip(), interaction.user)
+            return
 
-            if not profile:
-                await interaction.followup.send(
-                    **build_discord_embed(
-                        title="⚠️ Default RP Profile Warning",
-                        description=(
-                            f"The trigger `{trigger.strip()}` does not match any available profile. "
-                            f"You may not be able to use it until a matching profile is added."
-                        )
-                    ),
-                    ephemeral=True
-                )
-                logger.warning(f'User {interaction.user} set their default RP profile to unknown trigger "{trigger.strip()}".')
-            else:
-                power_url = profile.power_url if profile.power_url else "No power image set."
-                await interaction.followup.send(
-                    **build_discord_embed_with_thumbnail(
-                        title="✅ Default RP Profile Set",
-                        description=(
-                            f"Your default RP profile has been set to **{profile.username}** "
-                            f"(`{trigger.strip()}`).\n\n"
-                            f"You can now send messages normally in chat without specifying a trigger, "
-                            f"though you can still specify a different trigger if desired."
-                        ),
-                        thumbnail_url=profile.bust_url if profile.bust_url else profile.avatar_url,
-                    ),
-                    ephemeral=True,
-                )
-                logger.debug(f'User {interaction.user} set their default RP profile to "{profile.username}" with trigger "{trigger.strip()}".')
+        profile: ImpersonationProfile | None = get_profile_by_trigger_and_user(trigger, interaction.user)
+
+        if not profile:
+            error: str = (f'User {interaction.user} attempted to set their default RP profile to unknown trigger "{trigger}".')
+            await interaction.followup.send(**build_discord_embed(description=error), ephemeral=True)
+            logger.warning(error)
+            return
+
+        await impersonation_default.set(user_id, trigger)
+        await interaction.followup.send(
+            **build_discord_embed_with_thumbnail(
+                title="✅ Default RP Profile Set",
+                description=(
+                    f"Your default RP profile has been set to **{profile.username}** "
+                    f"(`{trigger}`).\n\n"
+                    f"You can now send messages normally in chat without specifying a trigger, "
+                    f"though you can still specify a different trigger if desired."
+                ),
+                thumbnail_url=profile.bust_url if profile.bust_url else profile.avatar_url,
+            ),
+            ephemeral=True,
+        )
+
+        logger.debug(f'User {interaction.user} set their default RP profile to "{profile.username}" with trigger "{trigger}".')
 
     @app_commands.command(
         name="rp_help",
@@ -427,5 +438,5 @@ class ImpersonationCommandHandler(commands.Cog):
         logger.debug(
             f"Impersonation bot status command invoked by "
             f"{interaction.user} in guild/channel "
-            f"{interaction.guild.id}/{channel.name} - {status_log}"
+            f"{interaction.guild.id}/{channel.name if channel else 'Unknown'} - {status_log}"
         )

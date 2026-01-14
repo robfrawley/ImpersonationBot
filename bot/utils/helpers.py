@@ -1,6 +1,6 @@
 import io
 import re
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Awaitable
 
 import aiohttp
 import discord
@@ -9,10 +9,13 @@ from discord import File
 from bot.core.bot import Bot
 from bot.utils.logger import logger
 from bot.utils.settings import ImpersonationProfile, settings
+from bot.utils.webhook_manager import webhook_manager
 from bot.utils.types import (
     AllowedChannelMixed,
+    AllowedChannelMixedOrNone,
     EmbedAndContentDict,
     EmbedDict,
+    EmbedDictWithOptionalContent,
     EmbedLike,
     RoleLike,
     RolesArg,
@@ -49,8 +52,8 @@ async def send_as_profile(
     reply_to: discord.Message | None = None,
     attachments: Iterable[discord.File] | None = None,
     stickers: Iterable[discord.StickerItem] | None = None,
-    send_callback: Callable[[str], None] | None = None,
-    rm_thinking_callback: Callable[[], None] | None = None,
+    send_callback: Callable[[str], Awaitable[None]] | None = None,
+    rm_thinking_callback: Callable[[], Awaitable[None]] | None = None,
 ) -> discord.Message | None:
     """
     Send a message via webhook impersonation.
@@ -58,6 +61,9 @@ async def send_as_profile(
     Returns:
         The new webhook message ID if sent successfully, otherwise None.
     """
+
+    if not isinstance(channel, discord.TextChannel):
+        raise ValueError("Only TextChannel is supported for impersonation.")
 
     if not is_rp_enabled(channel):
         msg = f"RP is not enabled in this channel ({get_channel_id(channel)}). Invoked by {user}."
@@ -82,10 +88,17 @@ async def send_as_profile(
             await send_callback(msg)
         return None
 
-    if not isinstance(channel, discord.abc.Messageable):
+    if not isinstance(channel, discord.TextChannel):
         if send_callback:
             await send_callback(f"Cannot send message in this channel. Invoked by {user}.")
         return None
+
+    #print('### webhook_manager[before]:', webhook_manager)
+    #print(f'### webhook_manager.webhooks({len(webhook_manager.webhooks)}:{len(webhook_manager.webhooks[channel.id]) if channel.id in webhook_manager.webhooks else 0}):[before]', webhook_manager.webhooks)
+    #new_p = await webhook_manager.get_for_profile(profile, channel)
+    #print('### new_p:', new_p)
+    #print('### webhook_manager[after]:', webhook_manager)
+    #print(f'### webhook_manager.webhooks({len(webhook_manager.webhooks)}:{len(webhook_manager.webhooks[channel.id]) if channel.id in webhook_manager.webhooks else 0}):[after]', webhook_manager.webhooks)
 
     try:
         webhook = await get_or_create_webhook(channel, profile)
@@ -114,7 +127,7 @@ async def send_as_profile(
                     sticker,
                     guild=getattr(channel, "guild", None)
                 )
-                files_to_send.append(sticker_file)
+                files_to_send.append(sticker_file) if sticker_file else None
             except Exception as e:
                 logger.warning(f'Failed to fetch sticker {sticker.name}: {e}')
 
@@ -167,8 +180,8 @@ async def fetch_sticker_as_file_safe(sticker, guild=None):
                 async with session.get(sticker.url) as resp:
                     data = await resp.read()
             from lottie import importers, exporters
-            animation = importers.from_bytes(data)
-            gif_bytes = exporters.to_bytes(animation, format="gif")
+            animation = importers.from_bytes(data) # type: ignore
+            gif_bytes = exporters.to_bytes(animation, format="gif") # type: ignore
             return File(io.BytesIO(gif_bytes), filename=f"{sticker.name}.gif")
         else:
             logger.warning(f'Sticker {sticker.name} has no URL to fetch Lottie data.')
@@ -234,7 +247,7 @@ async def convert_emojis_and_attachments_for_webhook(
     return converted_text, files
 
 
-async def get_or_create_webhook(channel: discord.TextChannel, profile: "ImpersonationProfile") -> discord.Webhook:
+async def get_or_create_webhook(channel: discord.TextChannel, profile: ImpersonationProfile) -> discord.Webhook:
     """
     Fetch an existing webhook for the given impersonation profile in the channel,
     or create one if none exists.
@@ -246,7 +259,9 @@ async def get_or_create_webhook(channel: discord.TextChannel, profile: "Imperson
     Returns:
         discord.Webhook: The existing or newly created webhook for the profile.
     """
-    profile_webhook_name = f"RP: {profile.username}"
+    return await webhook_manager.get_for_profile(profile, channel)
+
+    profile_webhook_name = f"RP:{profile.username}"
 
     # Fetch all webhooks in the channel
     webhooks = await channel.webhooks()
@@ -274,8 +289,25 @@ async def get_or_create_webhook(channel: discord.TextChannel, profile: "Imperson
         avatar=avatar_bytes
     )
 
+def validate_channel(channel: discord.abc.Messageable) -> discord.TextChannel:
+    """Normalize a channel identifier to a discord.TextChannel object.
 
-def is_rp_enabled(channel: AllowedChannelMixed) -> bool:
+    Args:
+        channel (AllowedChannelMixed): Channel to normalize (id, str, or discord channel object).
+
+    Returns:
+        discord.TextChannel: The normalized TextChannel object.
+
+    Raises:
+        ValueError: If the channel cannot be found or is of an unsupported type.
+    """
+    if isinstance(channel, discord.TextChannel):
+        return channel
+    else:
+        raise ValueError(f"Unsupported channel type: {type(channel)}")
+
+
+def is_rp_enabled(channel: AllowedChannelMixedOrNone) -> bool:
     """Check if RP (roleplay) is enabled in the given channel.
 
     Args:
@@ -287,22 +319,26 @@ def is_rp_enabled(channel: AllowedChannelMixed) -> bool:
     return get_channel_id(channel) in settings.enabled_channels
 
 
-def get_channel_id(channel: AllowedChannelMixed) -> int:
+def get_channel_id(channel: AllowedChannelMixedOrNone) -> int:
     """Normalize a channel identifier to an integer ID.
 
     Args:
-        channel (AllowedChannelMixed): Channel object, str, or int.
-
+        channel (AllowedChannelMixedOrNone): Channel object, str, int, or None.
     Returns:
         int: Channel ID.
     """
+
+    if channel is None:
+        raise ValueError("Channel cannot be None.")
+
     if isinstance(channel, str):
         return int(channel)
 
-    if isinstance(channel, int):
+    elif isinstance(channel, int):
         return channel
 
-    return channel.id
+    elif isinstance(channel, (discord.TextChannel, discord.Thread)):
+        return channel.id
 
 
 def mentions_to_str_list(mentions: list[RoleLike]) -> list[str]:
@@ -343,7 +379,7 @@ def build_discord_embed_with_thumbnail_and_image_and_role_ping(
     image_url: str = "",
     roles: RolesArg = None,
     color: discord.Color = discord.Color.blue(),
-) -> EmbedAndContentDict:
+) -> EmbedDictWithOptionalContent:
     """Build an embed with thumbnail, image, and optional role mentions."""
     role_list: list[RoleLike] = _normalize_roles(roles)
     return build_discord_send_dict_from_embed_like_and_content(
@@ -358,7 +394,7 @@ def build_discord_embed_with_thumbnail_and_role_ping(
     thumbnail_url: str = "",
     roles: RolesArg = None,
     color: discord.Color = discord.Color.blue(),
-) -> EmbedAndContentDict:
+) -> EmbedDictWithOptionalContent:
     """Build an embed with a thumbnail and optional role mentions."""
     role_list: list[RoleLike] = _normalize_roles(roles)
     return build_discord_send_dict_from_embed_like_and_content(
@@ -373,7 +409,7 @@ def build_discord_embed_with_image_and_role_ping(
     image_url: str = "",
     roles: RolesArg = None,
     color: discord.Color = discord.Color.blue(),
-) -> EmbedAndContentDict:
+) -> EmbedDictWithOptionalContent:
     """Build an embed with an image and optional role mentions."""
     role_list: list[RoleLike] = _normalize_roles(roles)
     return build_discord_send_dict_from_embed_like_and_content(
@@ -387,7 +423,7 @@ def build_discord_embed_with_role_ping(
     description: str = "",
     roles: RolesArg = None,
     color: discord.Color = discord.Color.blue(),
-) -> EmbedAndContentDict:
+) -> EmbedDictWithOptionalContent:
     """Build a simple embed with optional role mentions."""
     role_list: list[RoleLike] = _normalize_roles(roles)
     return build_discord_send_dict_from_embed_like_and_content(
@@ -406,7 +442,7 @@ def build_discord_embed_with_thumbnail_and_image(
     thumbnail_url: str = "",
     image_url: str = "",
     color: discord.Color = discord.Color.blue(),
-) -> EmbedDict:
+) -> EmbedDictWithOptionalContent:
     """Build an embed with thumbnail and image."""
     embed = discord.Embed(
         title=title,
@@ -426,7 +462,7 @@ def build_discord_embed_with_thumbnail(
     description: str = "",
     thumbnail_url: str = "",
     color: discord.Color = discord.Color.blue(),
-) -> EmbedDict:
+) -> EmbedDictWithOptionalContent:
     """Build an embed with a thumbnail only."""
     embed = discord.Embed(
         title=title,
@@ -444,7 +480,7 @@ def build_discord_embed_with_image(
     description: str = "",
     image_url: str = "",
     color: discord.Color = discord.Color.blue(),
-) -> EmbedDict:
+) -> EmbedDictWithOptionalContent:
     """Build an embed with an image only."""
     embed = discord.Embed(
         title=title,
@@ -462,7 +498,7 @@ def build_discord_embed(
     description: str = "",
     color: discord.Color = discord.Color.blue(),
     timestamp: discord.datetime | None = discord.utils.utcnow(),
-) -> EmbedDict:
+) -> EmbedDictWithOptionalContent:
     """Build a simple embed with no extra media."""
     embed = discord.Embed(
         title=title,
@@ -480,7 +516,7 @@ def build_discord_embed(
 def build_discord_send_dict_from_embed_like_and_content(
     embed_like: EmbedLike,
     content: str | None = None,
-) -> EmbedDict | EmbedAndContentDict:
+):
     """Convert an embed-like object and optional content to a dict suitable for sending.
 
     Args:
@@ -499,7 +535,7 @@ def build_discord_send_dict_from_embed_like_and_content(
     else:
         raise TypeError(f"Invalid embed_like argument: {embed_like!r}")
 
-    if content:
+    if content is not None:
         send_args["content"] = content
 
     return send_args

@@ -28,6 +28,8 @@ def main() -> None:
         bot.run(settings.discord_token)
     except KeyboardInterrupt:
         logger.info('Bot is shutting down...')
+    finally:
+        logger.info('Bot has exited...')
 
 
 if __name__ == "__main__":

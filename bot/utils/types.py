@@ -6,8 +6,9 @@ from collections.abc import Iterable
 # ----------------------------------------------------------------------
 
 # Channels that the bot can interact with
-AllowedChannel = discord.TextChannel | discord.Thread
+AllowedChannel = discord.TextChannel
 AllowedChannelMixed = AllowedChannel | int | str  # Can also be ID or name
+AllowedChannelMixedOrNone = AllowedChannel | int | str | None  # Can also be ID or name
 
 # Embed-related types
 class EmbedAndContentDict(dict):
@@ -19,8 +20,10 @@ class EmbedDict(dict):
     """Dictionary containing only an embed."""
     embed: discord.Embed
 
+EmbedDictWithOptionalContent = EmbedDict | EmbedAndContentDict | dict
+
 # Union type for any object that can be sent as a Discord embed
-EmbedLike = discord.Embed | EmbedDict | EmbedAndContentDict
+EmbedLike = discord.Embed | EmbedDict | EmbedAndContentDict | EmbedDictWithOptionalContent
 
 # Role types
 RoleLike = discord.Role | str  # Either a Role object or role mention string
