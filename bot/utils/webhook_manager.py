@@ -80,6 +80,7 @@ class WebhookManager:
         """Populate the local webhook cache from the channel."""
         assert channel is not None, "WebhookManager channel is not set."
 
+        self.webhooks.setdefault(channel.id, [])
         webhooks = await channel.webhooks()
 
         logger.debug(f'Found {len(webhooks)} existing webhooks for channel "{channel.id}".')
@@ -89,7 +90,7 @@ class WebhookManager:
                 logger.debug(
                     f'Caching webhook "{webhook.name}" with ID "{webhook.id}" to manager for channel "{channel.id}".'
                 )
-                self.webhooks.setdefault(channel.id, []).append(WebhookModel(webhook=webhook))
+                self.webhooks[channel.id].append(WebhookModel(webhook=webhook))
 
     async def _create_webhook(self, channel: discord.TextChannel, profile: ImpersonationProfile) -> discord.Webhook:
         profile_webhook_name = self._get_profile_identifier(profile)
@@ -118,7 +119,7 @@ class WebhookManager:
             raise Exception("Webhook creation failed.")
 
         webhook_model = WebhookModel(webhook=webhook)
-        self.webhooks[channel.id].append(webhook_model)
+        self.webhooks.setdefault(channel.id, []).append(webhook_model)
 
         logger.debug(
             f'Created new webhook "{profile_webhook_name}" with ID "{webhook.id}" for profile "{profile.username}" '

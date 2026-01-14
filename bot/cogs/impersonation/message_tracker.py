@@ -73,7 +73,7 @@ class ImpersonationMessageTracker(commands.Cog):
         if trigger_found == 'scene' and content_found:
             content_found = content_found.upper()
             try:
-                logger.debug(f'Sending rp_scene message from {message.author} in {channel_ident}: "{content_found}"')
+                logger.debug(f'Sending scene message from "{message.author}" in "{channel_ident}": "{content_found}"')
 
                 response: discord.Message = await message.channel.send(
                     **build_discord_embed(
@@ -123,41 +123,84 @@ class ImpersonationMessageTracker(commands.Cog):
             logger.debug(f'Deleted message from {message.author} in {channel_ident} for invalid format: "{content_found}"')
             return
 
-        # Prepare attachments as discord.File objects
+        # Prepare stickers and attachments
+        stickers: list[discord.StickerItem] = message.stickers if message.stickers else []
         files: list["discord.File"] = [
             await attachment.to_file() for attachment in message.attachments
         ] if message.attachments else []
 
-        channel = message.channel
+        content_found_parts: list[str] = self._split_message(content_found)
 
-        # Send the message via impersonation profile
-        message_sent: discord.Message | None = await send_as_profile(
-            bot=self.bot,
-            profile_trigger=trigger_found,
-            user=message.author,
-            channel=message.channel,
-            content=content_found if content_found else "",
-            attachments=files,
-            send_callback=send_callback,
-            rm_thinking_callback=rm_thinking,
-            stickers=message.stickers if message.stickers else None,
-        )
+        for part in content_found_parts:
+            # Send the message via impersonation profile
+            message_sent: discord.Message | None = await send_as_profile(
+                bot=self.bot,
+                profile_trigger=trigger_found,
+                user=message.author,
+                channel=message.channel,
+                content=part if part else "",
+                attachments=files,
+                send_callback=send_callback,
+                rm_thinking_callback=rm_thinking,
+                stickers=stickers if stickers else None,
+            )
 
-        if message_sent:
-            # Track the impersonated message
-            await impersonation_history.add(message.author.id, message_sent.id)
-
-        # Delete the original message after sending
-        try:
             if message_sent:
-                logger.debug(
-                    f'Processed impersonation message from {message.author} '
-                    f'in channel {channel_ident} with trigger "{trigger_found}" (message id: {message_sent.id}): "{content_found}"'
+                # Track the impersonated message
+                await impersonation_history.add(message.author.id, message_sent.id)
+
+            # Log the result
+            try:
+                log_msg: str = (
+                    f'impersonation message from {message.author} '
+                    f'in channel {channel_ident} with trigger "{trigger_found}" (message id: {message_sent.id if message_sent else "N/A"}): "{part}" '
+                    f'({len(files)} attachments, {len(stickers) if stickers else 0} stickers, '
+                    f'message part {content_found_parts.index(part)+1}/{len(content_found_parts)})'
                 )
+
+                if message_sent:
+                    logger.debug(f'Processed {log_msg}')
+                else:
+                    logger.debug(f'Failed to send {log_msg}')
+
+            except Exception as e:
+                logger.warning(f'Failed to delete message: {e}')
+
+            # Unset stickers and attachments after the first part
+            stickers = []
+            files = []
+
+    def _split_message(self, message: str, limit: int = 2000) -> list[str]:
+        """
+        Split a message into chunks not exceeding the specified character limit.
+
+        Args:
+            message: The message to split.
+            limit: The maximum number of characters per chunk.
+
+        Returns:
+            A list of message chunks.
+        """
+        if len(message) <= limit:
+            return [message]
+
+        chunks: list[str] = []
+        current_chunk: str = ""
+
+        for line in message.splitlines(keepends=True):
+            if len(current_chunk) + len(line) > limit:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = ""
+                if len(line) > limit:
+                    for i in range(0, len(line), limit):
+                        chunks.append(line[i:i + limit])
+                else:
+                    current_chunk = line
             else:
-                logger.debug(
-                    f'Failed to send impersonation message from {message.author} '
-                    f'in channel {channel_ident} with trigger "{trigger_found}": "{content_found}"'
-                )
-        except Exception as e:
-            logger.warning(f'Failed to delete message: {e}')
+                current_chunk += line
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks
