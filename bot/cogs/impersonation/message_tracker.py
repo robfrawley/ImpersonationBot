@@ -53,6 +53,9 @@ class ImpersonationMessageTracker(commands.Cog):
 
         channel: discord.TextChannel = validate_channel(message.channel)
 
+        if not is_rp_enabled(channel):
+            return
+
         async def send_callback(msg: str):
             try:
                 await channel.send(f'⚠️ {msg}', delete_after=10)
@@ -61,9 +64,6 @@ class ImpersonationMessageTracker(commands.Cog):
 
         async def rm_thinking():
             pass
-
-        if not is_rp_enabled(channel):
-            return
 
         channel_ident: int = get_channel_id(channel)
         content_origs: str = message.content.strip() if message.content else ""
