@@ -4,8 +4,6 @@ import discord
 from discord import Message
 from discord.ext import commands
 
-from bot.core import bot
-from bot.utils.webhook_manager import webhook_manager
 from bot.db.impersonation_default import impersonation_default
 from bot.db.impersonation_history import impersonation_history
 from bot.core.bot import Bot
@@ -44,7 +42,6 @@ class ImpersonationMessageTracker(commands.Cog):
         the `trigger: message` format will be deleted.
         """
 
-        # Ignore messages from bots
         if message.author.bot:
             return
 
@@ -54,13 +51,21 @@ class ImpersonationMessageTracker(commands.Cog):
         if isinstance(message.channel, discord.GroupChannel):
             return
 
-        # Ignore channels not enabled for RP
-        if not is_rp_enabled(validate_channel(message.channel)):
+        channel: discord.TextChannel = validate_channel(message.channel)
+
+        async def send_callback(msg: str):
+            try:
+                await channel.send(f'⚠️ {msg}', delete_after=10)
+            except Exception as e:
+                logger.warning(f'Failed to send callback message ("{msg}"): {e}')
+
+        async def rm_thinking():
+            pass
+
+        if not is_rp_enabled(channel):
             return
 
-        await message.delete()
-
-        channel_ident: int = get_channel_id(validate_channel(message.channel))
+        channel_ident: int = get_channel_id(channel)
         content_origs: str = message.content.strip() if message.content else ""
         trigger_match: re.Match | None = re.fullmatch(r'\s*([a-z0-9-_]+?)\s*:(.*)', content_origs, re.IGNORECASE | re.DOTALL)
         trigger_found: str | None = trigger_match.group(1).strip() if trigger_match else None
@@ -75,7 +80,7 @@ class ImpersonationMessageTracker(commands.Cog):
             try:
                 logger.debug(f'Sending scene message from "{message.author}" in "{channel_ident}": "{content_found}"')
 
-                response: discord.Message = await message.channel.send(
+                response: discord.Message = await channel.send(
                     **build_discord_embed(
                         description=(
                             f'```\n'
@@ -90,28 +95,18 @@ class ImpersonationMessageTracker(commands.Cog):
                 if response:
                     await impersonation_history.add(message.author.id, response.id)
 
+                await self._delete_message(message)
+
             except Exception as e:
-                logger.warning(f'Failed to send rp_scene message: {e}')
-                await message.channel.send("Failed to send scene message.", delete_after=10)
+                logger.warning(f'Failed to send scene message: {e}')
+                await channel.send("Failed to send scene message.", delete_after=10)
 
             return
 
-        # Define inline callbacks
-        async def send_callback(msg: str):
-            """Send an ephemeral-style error message in the same channel."""
-            try:
-                await message.channel.send(f'⚠️ {msg}', delete_after=10)
-            except Exception as e:
-                logger.warning(f'Failed to send ephemeral error message: {e}')
-
-        async def rm_thinking():
-            """Remove the original 'thinking...' message if present."""
-            # In track_messages, nothing special to delete before sending
-            pass  # No-op, kept for interface compatibility
-
         if not content_found and not message.attachments and not message.stickers:
-            # Empty message with no attachments, delete it
-            logger.debug(f'Deleted empty message from {message.author} in {channel_ident}: no content or attachments.')
+            # Empty message with no attachments or stickers, delete it
+            logger.debug(f'Deleted empty message from "{message.author}" in "{channel_ident}": no content or attachments.')
+            await self._delete_message(message)
             return
 
         if not trigger_found:
@@ -120,87 +115,99 @@ class ImpersonationMessageTracker(commands.Cog):
                 trigger_found = default_trigger
 
         if not trigger_found:
-            logger.debug(f'Deleted message from {message.author} in {channel_ident} for invalid format: "{content_found}"')
+            logger.debug(f'Deleted message from "{message.author}" in "{channel_ident}" for invalid format: "{content_found}"')
+            await self._delete_message(message)
             return
 
         # Prepare stickers and attachments
-        stickers: list[discord.StickerItem] = message.stickers if message.stickers else []
-        files: list["discord.File"] = [
+        stkrs: list[discord.StickerItem] = list(message.stickers) if message.stickers else []
+        files: list[discord.File] = [
             await attachment.to_file() for attachment in message.attachments
         ] if message.attachments else []
 
-        content_found_parts: list[str] = self._split_message(content_found)
+        # Split content into parts if necessary
+        content_file_only: bool = not content_found and (bool(files) or bool(stkrs))
+        content_parts_msg: list[str] = [""] if content_file_only else self._split_message(content_found)
+        content_parts_len: int = len(content_parts_msg)
 
-        for part in content_found_parts:
-            # Send the message via impersonation profile
+        for i, part in enumerate(content_parts_msg):
+            content_part_last: bool = (i == content_parts_len - 1)
+            content_part_files: list[discord.File] = files if content_part_last else []
+            content_part_stkrs: list[discord.StickerItem] = stkrs if content_part_last else []
+
             message_sent: discord.Message | None = await send_as_profile(
                 bot=self.bot,
                 profile_trigger=trigger_found,
                 user=message.author,
-                channel=message.channel,
-                content=part if part else "",
-                attachments=files,
+                channel=channel,
+                content=part or "",
+                attachments=content_part_files or None,
+                stickers=content_part_stkrs or None,
                 send_callback=send_callback,
                 rm_thinking_callback=rm_thinking,
-                stickers=stickers if stickers else None,
             )
 
             if message_sent:
-                # Track the impersonated message
                 await impersonation_history.add(message.author.id, message_sent.id)
 
             # Log the result
-            try:
-                log_msg: str = (
-                    f'impersonation message from {message.author} '
-                    f'in channel {channel_ident} with trigger "{trigger_found}" (message id: {message_sent.id if message_sent else "N/A"}): "{part}" '
-                    f'({len(files)} attachments, {len(stickers) if stickers else 0} stickers, '
-                    f'message part {content_found_parts.index(part)+1}/{len(content_found_parts)})'
-                )
+            log_msg: str = (
+                f"impersonation message \"{message_sent.id if message_sent else 'N/A'}\" from \"{message.author}\" "
+                f'in channel "{channel_ident}" using "{trigger_found}" trigger: '
+                f'"{part if part else "<empty-message-string>"}" '
+                f'('
+                f'{len(content_part_files)}/{len(files)} attachments, '
+                f'{len(content_part_stkrs)}/{len(stkrs)} stickers, '
+                f'{i+1}/{content_parts_len} message parts'
+                f')'
+            )
+            logger.debug(f'Processed {log_msg}' if message_sent else f'Failed to send {log_msg}')
 
-                if message_sent:
-                    logger.debug(f'Processed {log_msg}')
-                else:
-                    logger.debug(f'Failed to send {log_msg}')
+        await self._delete_message(message)
 
-            except Exception as e:
-                logger.warning(f'Failed to delete message: {e}')
-
-            # Unset stickers and attachments after the first part
-            stickers = []
-            files = []
-
-    def _split_message(self, message: str, limit: int = 2000) -> list[str]:
+    async def _delete_message(self, message: Message) -> None:
         """
-        Split a message into chunks not exceeding the specified character limit.
+        Delete a message from a channel.
+
+        Args:
+            message: The message to delete.
+        """
+        try:
+            await message.delete()
+        except Exception as e:
+            logger.warning(f'Failed to delete message "{message.id}": {e}')
+
+    def _split_message(self, message: str, limit: int = 1999) -> list[str]:
+        """
+        Split a message into parts not exceeding the specified character limit.
 
         Args:
             message: The message to split.
             limit: The maximum number of characters per chunk.
 
         Returns:
-            A list of message chunks.
+            A list of message parts.
         """
         if len(message) <= limit:
             return [message]
 
-        chunks: list[str] = []
-        current_chunk: str = ""
+        parts: list[str] = []
+        chunk: str = ""
 
         for line in message.splitlines(keepends=True):
-            if len(current_chunk) + len(line) > limit:
-                if current_chunk:
-                    chunks.append(current_chunk)
-                    current_chunk = ""
+            if len(chunk) + len(line) > limit:
+                if chunk:
+                    parts.append(chunk)
+                    chunk = ""
                 if len(line) > limit:
                     for i in range(0, len(line), limit):
-                        chunks.append(line[i:i + limit])
+                        parts.append(line[i:i + limit])
                 else:
-                    current_chunk = line
+                    chunk = line
             else:
-                current_chunk += line
+                chunk += line
 
-        if current_chunk:
-            chunks.append(current_chunk)
+        if chunk:
+            parts.append(chunk)
 
-        return chunks
+        return parts
